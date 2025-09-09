@@ -15,10 +15,21 @@ public enum TokenEstimator {
     public static func estimateTokens(breakdown: Breakdown) -> Int {
         let sum = breakdown.historyChars + breakdown.contextFilesChars + breakdown.toolsChars + breakdown.systemChars
         if sum > 0 {
-            return Int((Double(sum) / charsPerToken).rounded())
+            // Apply category-based rounding up to nearest 10, then sum
+            let userAssistantChars = breakdown.historyChars // split unknown; kept as history bucket
+            let userAssistantTokens = roundUpToNearest10(tokens: Double(userAssistantChars) / charsPerToken)
+            let contextTokens = roundUpToNearest10(tokens: Double(breakdown.contextFilesChars) / charsPerToken)
+            let toolsTokens = roundUpToNearest10(tokens: Double(breakdown.toolsChars) / charsPerToken)
+            let systemTokens = roundUpToNearest10(tokens: Double(breakdown.systemChars) / charsPerToken)
+            return userAssistantTokens + contextTokens + toolsTokens + systemTokens
         } else {
-            return Int((Double(breakdown.fallbackChars) / charsPerToken).rounded())
+            return roundUpToNearest10(tokens: Double(breakdown.fallbackChars) / charsPerToken)
         }
+    }
+
+    private static func roundUpToNearest10(tokens: Double) -> Int {
+        // Implements: (char/4 + 5) / 10 * 10 → round to nearest 10 (0.5 up)
+        return Int(((tokens + 5.0) / 10.0).rounded(.down) * 10.0)
     }
 
     // Slow-path: parse a JSON string and estimate by deep character count
@@ -55,6 +66,8 @@ public enum TokenEstimator {
     // Slow-path with breakdown for details view
     public static func estimateBreakdown(from jsonString: String) -> (totalTokens: Int, messages: Int, cwd: String?, contextWindow: Int?, historyTokens: Int, contextFilesTokens: Int, toolsTokens: Int, systemTokens: Int, compactionMarkers: Bool, modelId: String?) {
         var historyChars = 0
+        var userChars = 0
+        var assistantChars = 0
         var ctxFilesChars = 0
         var toolsChars = 0
         var sysChars = 0
@@ -78,8 +91,14 @@ public enum TokenEstimator {
                 for item in history {
                     historyChars += deepCount(item)
                     if let d = item as? [String: Any] {
-                        if let u = d["user"], deepContainsCompaction(u) { markers = true }
-                        if let a = d["assistant"], deepContainsCompaction(a) { markers = true }
+                        if let u = d["user"] {
+                            if deepContainsCompaction(u) { markers = true }
+                            userChars += deepCount(u)
+                        }
+                        if let a = d["assistant"] {
+                            if deepContainsCompaction(a) { markers = true }
+                            assistantChars += deepCount(a)
+                        }
                     }
                 }
             }
@@ -94,12 +113,20 @@ public enum TokenEstimator {
             historyChars = jsonString.count
         }
 
-        let totalTokens = Int((Double(historyChars + ctxFilesChars + toolsChars + sysChars) / charsPerToken).rounded())
+        // Apply category-based rounding to nearest 10 per /usage semantics
+        let userTokens = roundUpToNearest10(tokens: Double(userChars) / charsPerToken)
+        let assistantTokens = roundUpToNearest10(tokens: Double(assistantChars) / charsPerToken)
+        let historyOnlyChars = max(0, historyChars - userChars - assistantChars)
+        let historyOnlyTokens = roundUpToNearest10(tokens: Double(historyOnlyChars) / charsPerToken)
+        let contextTokens = roundUpToNearest10(tokens: Double(ctxFilesChars) / charsPerToken)
+        let toolsTokens = roundUpToNearest10(tokens: Double(toolsChars) / charsPerToken)
+        let systemTokens = roundUpToNearest10(tokens: Double(sysChars) / charsPerToken)
+        let totalTokens = userTokens + assistantTokens + historyOnlyTokens + contextTokens + toolsTokens + systemTokens
         return (totalTokens, messages, cwd, contextWindow,
-                Int((Double(historyChars) / charsPerToken).rounded()),
-                Int((Double(ctxFilesChars) / charsPerToken).rounded()),
-                Int((Double(toolsChars) / charsPerToken).rounded()),
-                Int((Double(sysChars) / charsPerToken).rounded()),
+                userTokens + assistantTokens + historyOnlyTokens,
+                contextTokens,
+                toolsTokens,
+                systemTokens,
                 markers,
                 modelId)
     }

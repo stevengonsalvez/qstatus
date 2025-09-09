@@ -185,12 +185,39 @@ public final class UpdateCoordinator: @unchecked Sendable {
         do {
             let count = try await reader.sessionCount()
             let offset = page * pageSize
-            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset)
+            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days)
+            // compute costs for allSessions
+            let costMapped = sessions.map { s -> SessionSummary in
+                let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
+                return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: s.contextWindow, usagePercent: s.usagePercent, messageCount: s.messageCount, lastActivity: s.lastActivity, state: s.state, internalRowID: s.internalRowID, hasCompactionIndicators: s.hasCompactionIndicators, modelId: s.modelId, costUSD: cost)
+            }
             await MainActor.run {
                 viewModel.totalSessionsCount = count
-                viewModel.allSessions = sessions
+                viewModel.allSessions = costMapped
                 viewModel.page = page
                 viewModel.showAllSheet = true
+            }
+            // Compute precise day/week/month for this page subset
+            let keys = sessions.map { $0.id }
+            if let perModel = try? await reader.fetchPeriodTokensByModel(forKeys: keys) {
+                var dTok = 0, wTok = 0, mTok = 0
+                var dCost = 0.0, wCost = 0.0, mCost = 0.0
+                for row in perModel {
+                    let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                    dTok += row.dayTokens; wTok += row.weekTokens; mTok += row.monthTokens
+                    dCost += CostEstimator.estimateUSD(tokens: row.dayTokens, ratePer1k: rate)
+                    wCost += CostEstimator.estimateUSD(tokens: row.weekTokens, ratePer1k: rate)
+                    mCost += CostEstimator.estimateUSD(tokens: row.monthTokens, ratePer1k: rate)
+                }
+                await MainActor.run {
+                    viewModel.sheetTokensDay = dTok
+                    viewModel.sheetTokensWeek = wTok
+                    viewModel.sheetTokensMonth = mTok
+                    viewModel.sheetCostDay = dCost
+                    viewModel.sheetCostWeek = wCost
+                    viewModel.sheetCostMonth = mCost
+                }
             }
         } catch {
             // ignore errors for now
@@ -221,6 +248,29 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 viewModel.tokensMonth += delta
                 viewModel.costWeek += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
                 viewModel.costMonth += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
+            }
+            // Precise day/week/month tokens+messages per model, then cost via pricing
+            if let perModel = try? await reader.fetchPeriodTokensByModel() {
+                var dayTok = 0, weekTok = 0, monthTok = 0
+                var dayMsg = 0, weekMsg = 0, monthMsg = 0
+                var dayCost = 0.0, weekCost = 0.0, monthCost = 0.0
+                for row in perModel {
+                    let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                    dayTok += row.dayTokens; weekTok += row.weekTokens; monthTok += row.monthTokens
+                    dayMsg += row.dayMessages; weekMsg += row.weekMessages; monthMsg += row.monthMessages
+                    dayCost += CostEstimator.estimateUSD(tokens: row.dayTokens, ratePer1k: rate)
+                    weekCost += CostEstimator.estimateUSD(tokens: row.weekTokens, ratePer1k: rate)
+                    monthCost += CostEstimator.estimateUSD(tokens: row.monthTokens, ratePer1k: rate)
+                }
+                await MainActor.run {
+                    viewModel.tokensToday = dayTok
+                    viewModel.tokensWeek = weekTok
+                    viewModel.tokensMonth = monthTok
+                    viewModel.costToday = dayCost
+                    viewModel.costWeek = weekCost
+                    viewModel.costMonth = monthCost
+                    viewModel.messagesMonth = monthMsg
+                }
             }
         } catch { /* ignore */ }
     }
@@ -253,6 +303,7 @@ public final class UsageViewModel: ObservableObject {
     @Published public var costToday: Double = 0
     @Published public var costWeek: Double = 0
     @Published public var costMonth: Double = 0
+    @Published public var messagesMonth: Int = 0
     // Internal trackers
     public var _lastGlobalTotalTokens: Int? = nil
     public var _lastTotalsDate: Date? = nil
@@ -268,6 +319,13 @@ public final class UsageViewModel: ObservableObject {
     public var onOpenAll: (() -> Void)? = nil
     public var onNextPage: (() -> Void)? = nil
     public var onPrevPage: (() -> Void)? = nil
+    // Sheet footer period totals
+    @Published public var sheetTokensDay: Int = 0
+    @Published public var sheetTokensWeek: Int = 0
+    @Published public var sheetTokensMonth: Int = 0
+    @Published public var sheetCostDay: Double = 0
+    @Published public var sheetCostWeek: Double = 0
+    @Published public var sheetCostMonth: Double = 0
     // Access to settings for UI toggles
     public var settings: SettingsStore? = nil
     public var forceRefresh: (() -> Void)? = nil

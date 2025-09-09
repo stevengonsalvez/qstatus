@@ -314,7 +314,7 @@ public actor QDBReader {
                 let totalSessions: Int = agg?["total_sessions"] ?? 0
                 let totalChars: Int = agg?["total_chars"] ?? 0
                 let nearCount: Int = agg?["near_count"] ?? 0
-                let totalTokens = Int((Double(totalChars) / 4.0).rounded())
+                let totalTokens = Int((((Double(totalChars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
 
                 // Top heavy sessions by estimated tokens
                 let topSQL = """
@@ -341,7 +341,7 @@ public actor QDBReader {
                     let key: String = r["key"] ?? ""
                     let chars: Int = r["chars"] ?? 0
                     let ctx: Int = r["ctx"] ?? 200000
-                    let tokens = Int((Double(chars)/4.0).rounded())
+                    let tokens = Int((((Double(chars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
                     let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0.0
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     top.append(SessionSummary(id: key, cwd: nil, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: 0, lastActivity: nil, state: state, internalRowID: nil, hasCompactionIndicators: false, modelId: nil, costUSD: 0.0))
@@ -353,9 +353,157 @@ public actor QDBReader {
             return try await dbPool.read { db in
                 let totalSessions = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations") ?? 0
                 let totalChars = try Int.fetchOne(db, sql: "SELECT SUM(length(value)) FROM conversations") ?? 0
-                let totalTokens = Int((Double(totalChars)/4.0).rounded())
+                let totalTokens = Int((((Double(totalChars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
                 return GlobalMetrics(totalSessions: totalSessions, totalTokens: totalTokens, sessionsNearLimit: 0, topHeavySessions: [])
             }
+        }
+    }
+
+    // Monthly messages across all sessions (approximate; scans last 30 days of history)
+    public func fetchMonthlyMessageCount(now: Date = Date()) async throws -> Int {
+        guard await json1Available() else { return 0 }
+        try await openIfNeeded()
+        guard let dbPool else { return 0 }
+        let iso8601 = ISO8601DateFormatter()
+        let calendar = Calendar.current
+        let startOfMonth = calendar.date(from: calendar.dateComponents([.year,.month], from: now)) ?? now
+        let since = iso8601.string(from: startOfMonth)
+        return try await dbPool.read { db in
+            let sql = """
+            SELECT COUNT(1) AS cnt
+            FROM conversations c, json_each(c.value,'$.history') h
+            WHERE COALESCE(
+                    json_extract(h.value,'$.assistant.timestamp'),
+                    json_extract(h.value,'$.assistant.created_at'),
+                    json_extract(h.value,'$.user.timestamp'),
+                    json_extract(h.value,'$.user.created_at')
+                  ) >= ?
+            """
+            return try Int.fetchOne(db, sql: sql, arguments: [since]) ?? 0
+        }
+    }
+
+    public struct PeriodByModel: Sendable {
+        public let modelId: String?
+        public let dayTokens: Int
+        public let weekTokens: Int
+        public let monthTokens: Int
+        public let dayMessages: Int
+        public let weekMessages: Int
+        public let monthMessages: Int
+    }
+
+    public func fetchPeriodTokensByModel(now: Date = Date()) async throws -> [PeriodByModel] {
+        guard await json1Available() else { return [] }
+        try await openIfNeeded()
+        guard let dbPool else { return [] }
+        let iso8601 = ISO8601DateFormatter()
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: now)
+        let startOfWeek = cal.date(from: cal.dateComponents([.yearForWeekOfYear,.weekOfYear], from: now)) ?? startOfDay
+        let startOfMonth = cal.date(from: cal.dateComponents([.year,.month], from: now)) ?? startOfDay
+        let dayStr = iso8601.string(from: startOfDay)
+        let weekStr = iso8601.string(from: startOfWeek)
+        let monthStr = iso8601.string(from: startOfMonth)
+        return try await dbPool.read { db in
+            let sql = """
+            WITH hist AS (
+              SELECT 
+                json_extract(c.value,'$.model_info.model_id') AS model_id,
+                COALESCE(
+                  json_extract(h.value,'$.assistant.timestamp'),
+                  json_extract(h.value,'$.assistant.created_at'),
+                  json_extract(h.value,'$.user.timestamp'),
+                  json_extract(h.value,'$.user.created_at')
+                ) AS ts,
+                CAST(((length(h.value)/4.0 + 5.0)/10.0) AS INTEGER)*10 AS tokens
+              FROM conversations c, json_each(c.value,'$.history') h
+            )
+            SELECT model_id,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS day_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS week_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS month_tokens,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS day_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS week_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS month_msgs
+            FROM hist
+            WHERE ts IS NOT NULL
+            GROUP BY model_id;
+            """
+            var out: [PeriodByModel] = []
+            let rows = try Row.fetchAll(db, sql: sql, arguments: [dayStr, weekStr, monthStr, dayStr, weekStr, monthStr])
+            for r in rows {
+                let mid: String? = r["model_id"]
+                let dTok: Int = r["day_tokens"] ?? 0
+                let wTok: Int = r["week_tokens"] ?? 0
+                let mTok: Int = r["month_tokens"] ?? 0
+                let dMsg: Int = r["day_msgs"] ?? 0
+                let wMsg: Int = r["week_msgs"] ?? 0
+                let mMsg: Int = r["month_msgs"] ?? 0
+                out.append(PeriodByModel(modelId: mid, dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg))
+            }
+            return out
+        }
+    }
+
+    public func fetchPeriodTokensByModel(forKeys keys: [String], now: Date = Date()) async throws -> [PeriodByModel] {
+        guard await json1Available() else { return [] }
+        try await openIfNeeded()
+        guard let dbPool, !keys.isEmpty else { return [] }
+        let iso8601 = ISO8601DateFormatter()
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: now)
+        let startOfWeek = cal.date(from: cal.dateComponents([.yearForWeekOfYear,.weekOfYear], from: now)) ?? startOfDay
+        let startOfMonth = cal.date(from: cal.dateComponents([.year,.month], from: now)) ?? startOfDay
+        let dayStr = iso8601.string(from: startOfDay)
+        let weekStr = iso8601.string(from: startOfWeek)
+        let monthStr = iso8601.string(from: startOfMonth)
+        return try await dbPool.read { db in
+            // Build placeholders for IN clause
+            let placeholders = Array(repeating: "?", count: keys.count).joined(separator: ",")
+            let sql = """
+            WITH filtered AS (
+              SELECT * FROM conversations WHERE key IN (
+                \(placeholders)
+              )
+            ), hist AS (
+              SELECT 
+                json_extract(c.value,'$.model_info.model_id') AS model_id,
+                COALESCE(
+                  json_extract(h.value,'$.assistant.timestamp'),
+                  json_extract(h.value,'$.assistant.created_at'),
+                  json_extract(h.value,'$.user.timestamp'),
+                  json_extract(h.value,'$.user.created_at')
+                ) AS ts,
+                CAST(((length(h.value)/4.0 + 5.0)/10.0) AS INTEGER)*10 AS tokens
+              FROM filtered c, json_each(c.value,'$.history') h
+            )
+            SELECT model_id,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS day_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS week_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS month_tokens,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS day_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS week_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS month_msgs
+            FROM hist
+            WHERE ts IS NOT NULL
+            GROUP BY model_id;
+            """
+            var args: [DatabaseValueConvertible] = keys
+            args.append(contentsOf: [dayStr, weekStr, monthStr, dayStr, weekStr, monthStr])
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            var out: [PeriodByModel] = []
+            for r in rows {
+                let mid: String? = r["model_id"]
+                let dTok: Int = r["day_tokens"] ?? 0
+                let wTok: Int = r["week_tokens"] ?? 0
+                let mTok: Int = r["month_tokens"] ?? 0
+                let dMsg: Int = r["day_msgs"] ?? 0
+                let wMsg: Int = r["week_msgs"] ?? 0
+                let mMsg: Int = r["month_msgs"] ?? 0
+                out.append(PeriodByModel(modelId: mid, dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg))
+            }
+            return out
         }
     }
 }

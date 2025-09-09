@@ -120,7 +120,7 @@ struct DropdownView: View {
                 GridRow {
                     Text("Month").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth))").font(.caption)
+                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth)) • \(viewModel.messagesMonth) msgs").font(.caption)
                 }
             }
             Divider()
@@ -340,7 +340,7 @@ struct SessionRow: View {
                 ProgressView(value: min(max(session.usagePercent/100.0, 0), 1))
                     .tint(color(for: session))
                     .frame(width: 120)
-                Text("\(formatTokens(session.tokensUsed)) / \(formatTokens(session.contextWindow)) • \(Int(session.usagePercent))% • \(CostEstimator.formatUSD(session.costUSD))")
+                Text("\(formatTokens(session.tokensUsed)) / \(formatTokens(session.contextWindow)) • \(Int(session.usagePercent))% • \(CostEstimator.formatUSD(session.costUSD)) • \(session.messageCount) msgs")
                     .font(.caption2)
             }
             if session.hasCompactionIndicators {
@@ -391,6 +391,25 @@ struct AllSessionsSheet: View {
                         Button(action: { viewModel.onSelectSession?(s) }) { SessionRow(session: s) }
                             .buttonStyle(.plain)
                     }
+                }
+            }
+            // Footer for this page: day/week/month subset totals (if available)
+            Divider()
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                GridRow {
+                    Text("Page Today").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.sheetTokensDay) • \(CostEstimator.formatUSD(viewModel.sheetCostDay))").font(.caption)
+                }
+                GridRow {
+                    Text("Page Week").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.sheetTokensWeek) • \(CostEstimator.formatUSD(viewModel.sheetCostWeek))").font(.caption)
+                }
+                GridRow {
+                    Text("Page Month").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.sheetTokensMonth) • \(CostEstimator.formatUSD(viewModel.sheetCostMonth))").font(.caption)
                 }
             }
             Divider()
