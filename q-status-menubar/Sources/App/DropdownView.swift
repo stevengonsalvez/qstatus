@@ -51,6 +51,11 @@ struct DropdownView: View {
                     Text(viewModel.estimatedCost)
                 }
                 GridRow {
+                    Label("Page Cost", systemImage: "dollarsign.square")
+                    Spacer()
+                    Text(viewModel.pageCost)
+                }
+                GridRow {
                     Label("Page Sessions", systemImage: "rectangle.stack")
                     Spacer()
                     Text("\(viewModel.totalSessions) • near limit: \(viewModel.sessionsNearLimit)")
@@ -80,13 +85,16 @@ struct DropdownView: View {
                     .foregroundStyle(.secondary)
                 VStack(spacing: 6) {
                     ForEach(viewModel.globalTop, id: \.id) { s in
-                        HStack {
-                            Text(shortId(s.id))
-                                .font(.system(.caption, design: .monospaced))
-                            Spacer()
-                            Text("\(formatTokens(s.tokensUsed)) • \(Int(s.usagePercent))%")
-                                .font(.caption2)
+                        Button(action: { viewModel.onSelectSession?(s) }) {
+                            HStack {
+                                Text(shortId(s.id))
+                                    .font(.system(.caption, design: .monospaced))
+                                Spacer()
+                                Text("\(formatTokens(s.tokensUsed)) • \(Int(s.usagePercent))%")
+                                    .font(.caption2)
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 Divider()
@@ -97,6 +105,25 @@ struct DropdownView: View {
                 .padding(.top, 4)
 
             Divider()
+            // Footer: Today / Week / Month
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                GridRow {
+                    Text("Today").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.tokensToday) • \(CostEstimator.formatUSD(viewModel.costToday))").font(.caption)
+                }
+                GridRow {
+                    Text("Week").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.tokensWeek) • \(CostEstimator.formatUSD(viewModel.costWeek))").font(.caption)
+                }
+                GridRow {
+                    Text("Month").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth))").font(.caption)
+                }
+            }
+            Divider()
             // Sessions list (first page)
             if !viewModel.sessions.isEmpty {
                 HStack {
@@ -104,6 +131,12 @@ struct DropdownView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Toggle("Active (7d)", isOn: Binding(get: { viewModel.settings?.showActiveLast7Days ?? false }, set: { viewModel.settings?.showActiveLast7Days = $0 }))
+                        .toggleStyle(.switch)
+                        .font(.caption)
+                    Toggle("Group by folder", isOn: Binding(get: { viewModel.settings?.groupByFolder ?? false }, set: { viewModel.settings?.groupByFolder = $0 }))
+                        .toggleStyle(.switch)
+                        .font(.caption)
                     Picker("Sort", selection: $viewModel.sort) {
                         Text("Recent").tag(SessionSort.lastActivity)
                         Text("Usage").tag(SessionSort.usage)
@@ -112,6 +145,8 @@ struct DropdownView: View {
                         Text("ID").tag(SessionSort.id)
                     }
                     .pickerStyle(.menu)
+                    Button { viewModel.forceRefresh?() } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Refresh now")
                 }
                 TextField("Search by id or folder…", text: $viewModel.searchQuery)
                     .textFieldStyle(.roundedBorder)
@@ -140,7 +175,7 @@ struct DropdownView: View {
             }
         }
         .padding(14)
-        .frame(width: 320)
+        .frame(width: 400)
         .sheet(item: Binding(get: { viewModel.selectedSession }, set: { _ in viewModel.selectedSession = nil })) { details in
             SessionDetailView(details: details)
                 .frame(width: 420, height: 360)
@@ -293,6 +328,8 @@ struct SessionRow: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text(cwdTail(cwd))
+                            .truncationMode(.head)
+                            .help(cwd)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -303,7 +340,7 @@ struct SessionRow: View {
                 ProgressView(value: min(max(session.usagePercent/100.0, 0), 1))
                     .tint(color(for: session))
                     .frame(width: 120)
-                Text("\(formatTokens(session.tokensUsed)) / \(formatTokens(session.contextWindow)) • \(Int(session.usagePercent))%")
+                Text("\(formatTokens(session.tokensUsed)) / \(formatTokens(session.contextWindow)) • \(Int(session.usagePercent))% • \(CostEstimator.formatUSD(session.costUSD))")
                     .font(.caption2)
             }
             if session.hasCompactionIndicators {

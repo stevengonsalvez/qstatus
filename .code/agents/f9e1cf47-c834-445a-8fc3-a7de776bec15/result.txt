@@ -1,0 +1,743 @@
+[2025-09-09T19:53:37] Code v0.2.105
+--------
+workdir: /Users/stevengonsalvez/d/git/qlips-menubar
+model: gpt-5
+provider: openai
+approval: never
+sandbox: danger-full-access
+reasoning effort: medium
+reasoning summaries: auto
+--------
+[2025-09-09T19:53:37] User instructions:
+Context: Repo: q-status-menubar. Menubar app scaffold using SwiftUI + GRDB + Yams. Current implementation enumerates sessions with JSON1 fast path (length/json_extract) and fallback to Swift parse, supports search/sort, details sheet, compaction heuristics, and global totals/top sessions. User wants per-session split (not folder aggregation) with optional group-by-folder mode, an 'Active last 7 days' filter, per-session cost + totals, manual refresh, a persistent footer with system-wide day/week/month metrics, wider dropdown, and better path truncation.
+
+Agent: We need to plan the next iteration of Q‑Status Menubar based on real user feedback and the current codebase. The current UI shows: header with global totals, metrics grid, Top 5 Sessions, sparkline, and a sessions list with search/sort, View All sheet, details pane, compaction indicators, and global totals. Data comes from macOS amazon‑q SQLite database (conversations table with JSON), using JSON1 fast path and a 4:1 char→token heuristic. Adaptive polling 2–5s via PRAGMA data_version.
+
+Requested improvements
+1) Clarify grouping for sessions with same CWD:
+   - Ensure Top 5 and list are per‑session, not aggregated by folder.
+   - Provide an optional toggle to group by folder (aggregate tokens across sessions under same CWD) vs split by individual sessions.
+2) Active sessions only filter:
+   - Add a toggle to show only sessions with activity in the last 7 days.
+   - Define last activity via JSON timestamps (preferred) or reasonable fallback.
+3) Session‑level cost:
+   - Compute per‑session cost using tokens×rate_per_1k; show in rows and detail; sum for page/global.
+   - Optional model‑specific pricing using model_info.model_id; settings to override per model.
+4) Auto refresh:
+   - Confirm and expose refresh interval in UI; allow manual refresh button.
+5) System‑wide metrics footer widget:
+   - Always visible footer with global totals and period splits (day/week/month).
+   - Implement day/week/month token totals and costs; efficient and low‑overhead.
+6) UI tweaks:
+   - Wider dropdown (e.g., 380–420 px) and enable head truncation for path (keep tail).
+   - Show tail of CWD (last 2 components) and full path in tooltip.
+
+Current code pointers
+- Data: Sources/Core/QDBReader.swift, TokenEstimator.swift (breakdown), Models.swift (SessionSummary, SessionDetails, GlobalMetrics)
+- State/UI: UpdateCoordinator.swift (polling, compaction, sessions), DropdownView.swift (header, list, top 5, sparkline), Preferences window
+
+Design targets
+- Keep CPU <1% idle, <5% update; memory <50MB; read‑only DB.
+- Pagination and caching for large DBs.
+
+Please provide a concrete, phased plan with module/API changes, SQL/JSON paths, UI components, performance tactics, and acceptance criteria. Include data model updates, how to calculate last activity from JSON, and how to compute day/week/month splits efficiently (e.g., incremental snapshot deltas).
+
+
+Files to consider: q-status-menubar/Sources/Core/QDBReader.swift, q-status-menubar/Sources/Core/TokenEstimator.swift, q-status-menubar/Sources/Core/Models.swift, q-status-menubar/Sources/Core/UpdateCoordinator.swift, q-status-menubar/Sources/App/DropdownView.swift, q-status-menubar/Sources/App/Preferences/PreferencesWindow.swift, q-status-menubar/README.md
+
+[Running in read-only mode - no modifications allowed]
+
+[2025-09-09T19:53:40] thinking
+
+**Planning implementation improvements**
+
+I need to come up with a phased plan for the requested improvements, which includes module, API changes, SQL/JSON paths, UI components, performance tactics, and acceptance criteria. The user mentioned we're in read-only mode, meaning I can't modify files, just read them. Even though the environment seems to allow unsandboxed commands, I have to remember that I shouldn't write files. My first step will be opening the relevant files for review.
+[2025-09-09T19:53:42] codex
+
+I’ll scan the core files to align the plan with current data models, queries, and UI structure.
+[2025-09-09T19:53:42] exec bash -lc 'ls -la' in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:53:43] bash -lc 'ls -la' succeeded in 670ms:
+total 48
+drwxr-xr-x@  13 stevengonsalvez  staff   416  9 Sep 20:17 .
+drwxr-xr-x  108 stevengonsalvez  staff  3456  9 Sep 13:58 ..
+drwxr-xr-x@   3 stevengonsalvez  staff    96  9 Sep 11:27 .claude
+drwxr-xr-x@   3 stevengonsalvez  staff    96  9 Sep 12:30 .code
+-rw-r--r--@   1 stevengonsalvez  staff    72  9 Sep 11:27 .git
+-rw-r--r--@   1 stevengonsalvez  staff  1043  9 Sep 12:36 .gitignore
+drwxr-xr-x@   6 stevengonsalvez  staff   192  9 Sep 12:29 logs
+drwxr-xr-x@   4 stevengonsalvez  staff   128  9 Sep 11:27 memory
+-rw-r--r--@   1 stevengonsalvez  staff  3600  9 Sep 20:17 q-status-implementation-plan.md
+drwxr-xr-x@   9 stevengonsalvez  staff   288  9 Sep 12:41 q-status-menubar
+-rw-r--r--@   1 stevengonsalvez  staff  8492  9 Sep 11:27 q-status-requirements.md
+drwxr-xr-x@   8 stevengonsalvez  staff   256  9 Sep 11:27 scripts
+drwxr-xr-x@   6 stevengonsalvez  staff   192  9 Sep 11:27 templates
+[2025-09-09T19:53:43] tokens used: 1233
+[2025-09-09T19:53:45] exec bash -lc "rg -n \"class|struct|enum|protocol|extension|func|var|let\" q-status-menubar/Sources -g '"'!**/.build/**'"' | head -n 200" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:53:45] bash -lc "rg -n \"class|struct|enum|protocol|extension|func|var|let\" q-status-menubar/Sources -g '"'!**/.build/**'"' | head -n 200" succeeded in 488ms:
+
+[2025-09-09T19:53:45] tokens used: 635
+
+[2025-09-09T19:53:49] thinking
+
+**Adjusting search approach**
+
+It seems that ripgrep isn't available, so I'll switch to using find and grep for my search. This might be a bit more manual, but it should still work effectively for what I need to accomplish. I just need to ensure that I properly structure my search commands so that I get the right results. Let's see how that goes!
+[2025-09-09T19:53:50] exec bash -lc 'fd -H -I -t f q-status-menubar/Sources || find q-status-menubar/Sources -type f' in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:53:50] bash -lc 'fd -H -I -t f q-status-menubar/Sources || find q-status-menubar/Sources -type f' succeeded in 371ms:
+q-status-menubar/Sources/Core/CostEstimator.swift
+q-status-menubar/Sources/Core/TokenEstimator.swift
+q-status-menubar/Sources/Core/IconBadgeRenderer.swift
+q-status-menubar/Sources/Core/UpdateCoordinator.swift
+q-status-menubar/Sources/Core/Models.swift
+q-status-menubar/Sources/Core/Settings.swift
+q-status-menubar/Sources/Core/QDBReader.swift
+q-status-menubar/Sources/Core/LaunchAtLoginHelper.swift
+q-status-menubar/Sources/Core/MetricsCalculator.swift
+q-status-menubar/Sources/Core/Notifier.swift
+q-status-menubar/Sources/App/Preferences/PreferencesWindow.swift
+q-status-menubar/Sources/App/DropdownView.swift
+q-status-menubar/Sources/App/MenuBarController.swift
+q-status-menubar/Sources/App/QStatusApp.swift
+q-status-menubar/Sources/Integrations/LaunchAtLoginHelper.swift
+[2025-09-09T19:53:50] tokens used: 209
+[2025-09-09T19:53:53] exec bash -lc "sed -n '1,200p' q-status-menubar/Sources/Core/Models.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:53:54] bash -lc "sed -n '1,200p' q-status-menubar/Sources/Core/Models.swift" succeeded in 347ms:
+import Foundation
+
+public struct UsageSnapshot: Equatable, Sendable {
+    public let timestamp: Date
+    public let tokensUsed: Int
+    public let messageCount: Int
+    public let conversationId: String?
+    public let sessionLimitOverride: Int?
+}
+
+// Per-session rollup used for listing sessions
+public enum SessionState: Sendable {
+    case normal
+    case warn
+    case critical
+    case compacting
+    case compacted
+    case error
+}
+
+[2025-09-09T19:53:54] tokens used: 359
+[2025-09-09T19:53:56] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/QDBReader.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:53:57] bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/QDBReader.swift" succeeded in 227ms:
+import Foundation
+import GRDB
+
+public struct QDBConfig: Sendable {
+    public var dbPath: String
+    public init(dbPath: String = QDBConfig.defaultDBPath()) {
+        self.dbPath = dbPath
+    }
+
+    public static func defaultDBPath() -> String {
+        // Env override first
+        if let env = ProcessInfo.processInfo.environment["QSTATUS_DB_PATH"], !env.isEmpty {
+            return (env as NSString).expandingTildeInPath
+        }
+        // macOS default per research: ~/Library/Application Support/amazon-q/data.sqlite3
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let url = home.appendingPathComponent("Library/Application Support/amazon-q/data.sqlite3")
+        return url.path
+    }
+}
+[2025-09-09T19:53:57] tokens used: 569
+[2025-09-09T19:53:59] exec bash -lc "sed -n '240,520p' q-status-menubar/Sources/Core/QDBReader.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:00] bash -lc "sed -n '240,520p' q-status-menubar/Sources/Core/QDBReader.swift" succeeded in 271ms:
+                    ) ELSE length(value) END
+                  ) AS total_chars,
+                  SUM(
+                    CASE WHEN (
+                      (CASE WHEN (
+                        COALESCE(length(json_extract(value,'$.history')),0) +
+                        COALESCE(length(json_extract(value,'$.context_manager.context_files')),0) +
+                        COALESCE(length(json_extract(value,'$.tool_manager')),0) +
+                        COALESCE(length(json_extract(value,'$.system_prompts')),0)
+                      ) > 0 THEN (
+                        COALESCE(length(json_extract(value,'$.history')),0) +
+                        COALESCE(length(json_extract(value,'$.context_manager.context_files')),0) +
+                        COALESCE(length(json_extract(value,'$.tool_manager')),0) +
+                        COALESCE(length(json_extract(value,'$.system_prompts')),0)
+                      ) ELSE length(value) END) / 4.0
+                    ) >= COALESCE(json_extract(value,'$.model_info.context_window_tokens'),200000) * 0.9
+                    THEN 1 ELSE 0 END
+                  ) AS near_count
+                FROM conversations;
+                """
+[2025-09-09T19:54:00] tokens used: 3031
+[2025-09-09T19:54:03] exec bash -lc "sed -n '1,220p' q-status-menubar/Sources/Core/TokenEstimator.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:03] bash -lc "sed -n '1,220p' q-status-menubar/Sources/Core/TokenEstimator.swift" succeeded in 158ms:
+import Foundation
+
+public enum TokenEstimator {
+    // Approx ratio used by Q when exact counts aren't present
+    private static let charsPerToken = 4.0
+
+    public struct Breakdown: Sendable {
+        public let historyChars: Int
+        public let contextFilesChars: Int
+        public let toolsChars: Int
+        public let systemChars: Int
+        public let fallbackChars: Int
+    }
+
+    public static func estimateTokens(breakdown: Breakdown) -> Int {
+        let sum = breakdown.historyChars + breakdown.contextFilesChars + breakdown.toolsChars + breakdown.systemChars
+        if sum > 0 {
+            return Int((Double(sum) / charsPerToken).rounded())
+        } else {
+            return Int((Double(breakdown.fallbackChars) / charsPerToken).rounded())
+[2025-09-09T19:54:03] tokens used: 1679
+[2025-09-09T19:54:06] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/UpdateCoordinator.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:06] bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/UpdateCoordinator.swift" succeeded in 162ms:
+import Foundation
+
+public final class UpdateCoordinator: @unchecked Sendable {
+    public let reader: QDBReader
+    public let metrics: MetricsCalculator
+    public let settings: SettingsStore
+
+    public var onUIUpdate: ((UsageViewModel) -> Void)?
+    public let viewModel: UsageViewModel
+
+    private var timerTask: Task<Void, Never>?
+    private var history: [UsageSnapshot] = []
+    private var lastDataVersion: Int = -1
+    private var stableCycles: Int = 0
+    private var sessionsPage: Int = 0
+    private let pageSize: Int = 50
+    // Compaction heuristics
+    private var lastSessionMetrics: [String: (tokens: Int, messages: Int, usage: Double)] = [:]
+    private var compactingUntil: [String: Date] = [:]
+
+[2025-09-09T19:54:06] tokens used: 1619
+[2025-09-09T19:54:09] exec bash -lc "sed -n '240,520p' q-status-menubar/Sources/Core/UpdateCoordinator.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:09] bash -lc "sed -n '240,520p' q-status-menubar/Sources/Core/UpdateCoordinator.swift" succeeded in 119ms:
+    public func togglePause() { isPaused.toggle() }
+    public func quit() { NSApp.terminate(nil) }
+
+    private static func formatTTL(_ v: TimeInterval) -> String {
+        let mins = Int(v / 60)
+        let hrs = mins / 60
+        if hrs > 0 { return "\(hrs)h \(mins % 60)m" }
+        return "\(mins)m"
+    }
+}
+
+#if canImport(SwiftUI)
+import SwiftUI
+public typealias Color = SwiftUI.Color
+extension UsageViewModel {
+    public static var preview: UsageViewModel {
+        let vm = UsageViewModel()
+        vm.update(used: 33000, remaining: 11000, percent: 75, health: .warning, tpm: 250, ttl: 44*60, sparkline: (0..<40).map { _ in Double(Int.random(in: 10...100)) }, cost: "$0.42")
+        return vm
+    }
+[2025-09-09T19:54:09] tokens used: 2719
+[2025-09-09T19:54:12] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/App/DropdownView.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:12] bash -lc "sed -n '1,240p' q-status-menubar/Sources/App/DropdownView.swift" succeeded in 168ms:
+import SwiftUI
+import AppKit
+#if canImport(Charts)
+import Charts
+#endif
+import Core
+
+struct DropdownView: View {
+    @ObservedObject var viewModel: UsageViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Global header summary
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Q Token Usage").font(.headline)
+                    Text(globalSummaryLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+[2025-09-09T19:54:12] tokens used: 497
+[2025-09-09T19:54:15] exec bash -lc "sed -n '240,520p' q-status-menubar/Sources/App/DropdownView.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:15] bash -lc "sed -n '240,520p' q-status-menubar/Sources/App/DropdownView.swift" succeeded in 155ms:
+                    if let cwd = details.summary.cwd { Label(cwd, systemImage: "folder") .font(.caption) }
+                }
+                Spacer()
+                VStack(alignment: .trailing) {
+                    ProgressView(value: min(max(details.summary.usagePercent/100.0, 0), 1))
+                        .tint(color(for: details.summary))
+                        .frame(width: 160)
+                    Text("\(formatTokens(details.summary.tokensUsed)) / \(formatTokens(details.summary.contextWindow)) • \(Int(details.summary.usagePercent))%")
+                        .font(.caption)
+                }
+            }
+            Divider()
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow { Text("History"); Spacer(); Text("\(formatTokens(details.historyTokens))") }
+                GridRow { Text("Context Files"); Spacer(); Text("\(formatTokens(details.contextFilesTokens))") }
+                GridRow { Text("Tools"); Spacer(); Text("\(formatTokens(details.toolsTokens))") }
+                GridRow { Text("System Prompts"); Spacer(); Text("\(formatTokens(details.systemTokens))") }
+                GridRow { Text("Messages"); Spacer(); Text("\(details.summary.messageCount)") }
+            }
+            Spacer()
+[2025-09-09T19:54:15] tokens used: 2336
+[2025-09-09T19:54:18] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/Settings.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:18] bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/Settings.swift" succeeded in 131ms:
+import Foundation
+import Combine
+import Yams
+
+public final class SettingsStore: ObservableObject {
+    @Published public var updateInterval: Int = 3
+    @Published public var showPercentBadge: Bool = true
+    @Published public var launchAtLogin: Bool = false
+
+    @Published public var notificationsEnabled: Bool = true
+    @Published public var warnThreshold: Int = 70
+    @Published public var highThreshold: Int = 90
+    @Published public var criticalThreshold: Int = 95
+
+    public enum ColorScheme: String, CaseIterable {
+        case auto, light, dark
+    }
+    @Published public var colorScheme: ColorScheme = .auto
+
+    // Token limit configuration (placeholder)
+[2025-09-09T19:54:18] tokens used: 1937
+[2025-09-09T19:54:20] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/MetricsCalculator.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:21] bash -lc "sed -n '1,240p' q-status-menubar/Sources/Core/MetricsCalculator.swift" succeeded in 242ms:
+import Foundation
+
+public final class MetricsCalculator: @unchecked Sendable {
+    public init() {}
+
+    public func usagePercent(used: Int, limit: Int) -> Double {
+        guard limit > 0 else { return 0 }
+        return min(100.0, max(0.0, (Double(used) / Double(limit)) * 100.0))
+    }
+
+    public func tokensPerMinute(history: [UsageSnapshot]) -> Double {
+        guard history.count >= 2 else { return 0 }
+        let sorted = history.sorted { $0.timestamp < $1.timestamp }
+        guard let first = sorted.first, let last = sorted.last, last.timestamp > first.timestamp else { return 0 }
+        let deltaTokens = max(0, last.tokensUsed - first.tokensUsed)
+        let deltaMinutes = last.timestamp.timeIntervalSince(first.timestamp) / 60.0
+        return deltaMinutes > 0 ? Double(deltaTokens) / deltaMinutes : 0
+    }
+
+    public func timeToLimit(remaining: Int, ratePerMin: Double) -> TimeInterval? {
+[2025-09-09T19:54:21] tokens used: 1509
+[2025-09-09T19:54:25] exec bash -lc "sed -n '1,220p' q-status-menubar/Sources/App/Preferences/PreferencesWindow.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:25] bash -lc "sed -n '1,220p' q-status-menubar/Sources/App/Preferences/PreferencesWindow.swift" succeeded in 206ms:
+import SwiftUI
+import Core
+
+struct PreferencesWindow: View {
+    @StateObject private var settings = SettingsStore()
+
+    var body: some View {
+        TabView {
+            GeneralTab(settings: settings)
+                .tabItem { Label("General", systemImage: "gearshape") }
+            NotificationsTab(settings: settings)
+                .tabItem { Label("Notifications", systemImage: "bell") }
+            AppearanceTab(settings: settings)
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+        }
+        .padding()
+        .frame(width: 520, height: 380)
+        .onChange(of: settings.updateInterval) { _ in settings.saveToDisk() }
+        .onChange(of: settings.showPercentBadge) { _ in settings.saveToDisk() }
+        .onChange(of: settings.launchAtLogin) { newValue in
+[2025-09-09T19:54:25] tokens used: 515
+[2025-09-09T19:54:28] exec bash -lc "sed -n '1,240p' q-status-menubar/Sources/App/MenuBarController.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:28] bash -lc "sed -n '1,240p' q-status-menubar/Sources/App/MenuBarController.swift" succeeded in 372ms:
+import AppKit
+import SwiftUI
+import Core
+
+@MainActor
+final class MenuBarController: NSObject {
+    private let statusItem: NSStatusItem
+    private let popover: NSPopover
+    private let coordinator: UpdateCoordinator
+    private let settings: SettingsStore
+
+    private var hostingController: NSViewController?
+
+    init(coordinator: UpdateCoordinator, settings: SettingsStore) {
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.popover = NSPopover()
+        self.coordinator = coordinator
+        self.settings = settings
+        super.init()
+        self.popover.behavior = .transient
+[2025-09-09T19:54:28] tokens used: 891
+[2025-09-09T19:54:35] exec bash -lc "sed -n '1,200p' q-status-menubar/Sources/Core/CostEstimator.swift" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:35] bash -lc "sed -n '1,200p' q-status-menubar/Sources/Core/CostEstimator.swift" succeeded in 142ms:
+import Foundation
+
+public enum CostEstimator {
+    public static func estimateUSD(tokens: Int, ratePer1k: Double) -> Double {
+        return (Double(tokens) / 1000.0) * ratePer1k
+    }
+    public static func formatUSD(_ value: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.maximumFractionDigits = 2
+        return f.string(from: NSNumber(value: value)) ?? "$0.00"
+    }
+}
+
+[2025-09-09T19:54:35] tokens used: 730
+
+[2025-09-09T19:54:40] thinking
+
+**Analyzing cost estimation in code**
+
+I see that the code has a CostEstimator and settings for cost rate and model name, but there’s no visible per-session cost in the UI. The estimatedCost in the header uses the latest usage snapshot, derived from tokensUsed in the most recent conversation. It looks like the UI summarizes global stats but shows per-session metrics like tokens used and remaining. So, it seems to track the most recent session while referencing global totals in the header.
+**Proposing UI improvements for metrics**
+
+It seems there’s a need for some improvements in the metrics grid, including options to toggle filtering for "Active last 7 days," grouping by folder, and displaying per-session costs and totals. Also, adding a manual refresh button and enhancing the footer with system-wide metrics would be helpful. We should establish concrete SQL or JSON paths for database timestamps to derive the last activity. It's important to ensure robustness, possibly by utilizing internal row IDs as a fallback.
+**Exploring JSON handling in SQLite**
+
+I'm looking into how to extract the last timestamp from a JSON array in SQLite since the last index operator isn't supported. I'll consider using `json_array_length` to find the length and then construct the path for `json_extract`. However, it seems that dynamic indexing isn’t straightforward within the `json_extract` text. Instead, I can use `json_each` to iterate through the array and retrieve the last item based on its key, allowing me to get the desired timestamp.
+**Optimizing last activity timestamp retrieval**
+
+I’m considering how to compute the last activity timestamp by scanning the history with `json_each`, but that could become heavy for each row. It seems more efficient to filter for "last 7 days" using `model_info.last_updated`, if available. If not, I could approximate it by examining row IDs in ascending order. I’ll need to check if the `value` contains fields like `last_activity_at` or `session_updated_at`. Overall, proposing JSON paths for `model_info` could be helpful, along with fallback options from various timestamps in the history.
+[2025-09-09T19:54:51] codex
+**Proposing UI improvements for metrics**
+
+It seems there’s a need for some improvements in the metrics grid, including options to toggle filtering for "Active last 7 days," grouping by folder, and displaying per-session costs and totals. Also, adding a manual refresh button and enhancing the footer with system-wide metrics would be helpful. We should establish concrete SQL or JSON paths for database timestamps to derive the last activity. It's important to ensure robustness, possibly by utilizing internal row IDs as a fallback.
+[2025-09-09T19:54:51] codex
+**Exploring JSON handling in SQLite**
+
+I'm looking into how to extract the last timestamp from a JSON array in SQLite since the last index operator isn't supported. I'll consider using `json_array_length` to find the length and then construct the path for `json_extract`. However, it seems that dynamic indexing isn’t straightforward within the `json_extract` text. Instead, I can use `json_each` to iterate through the array and retrieve the last item based on its key, allowing me to get the desired timestamp.
+[2025-09-09T19:54:51] codex
+**Optimizing last activity timestamp retrieval**
+
+I’m considering how to compute the last activity timestamp by scanning the history with `json_each`, but that could become heavy for each row. It seems more efficient to filter for "last 7 days" using `model_info.last_updated`, if available. If not, I could approximate it by examining row IDs in ascending order. I’ll need to check if the `value` contains fields like `last_activity_at` or `session_updated_at`. Overall, proposing JSON paths for `model_info` could be helpful, along with fallback options from various timestamps in the history.
+[2025-09-09T19:54:51] exec bash -lc "sed -n '1,240p' q-status-menubar/README.md" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T19:54:51] bash -lc "sed -n '1,240p' q-status-menubar/README.md" succeeded in 166ms:
+Q-Status Menubar (Prototype Scaffold)
+
+This is the initial scaffold for a native macOS menu bar app that monitors Amazon Q CLI usage by reading the local SQLite database at `~/.aws/q/db/q.db` in a read-only, non-invasive way.
+
+Status: Menubar app scaffold. Running via SwiftPM now sets `NSApp.setActivationPolicy(.accessory)`, so it behaves like a proper menu bar app (no Dock icon). For distribution, create an Xcode app target and set `LSUIElement=1` in Info.plist, then sign/notarize.
+
+Run (dev):
+
+```
+cd q-status-menubar
+swift run QStatusMenubar
+```
+
+Notes:
+- Runs as a true menu bar app in SwiftPM via accessory activation policy; an Xcode target with `LSUIElement` is recommended for release builds.
+- DB access is read-only and points to `~/Library/Application Support/amazon-q/data.sqlite3`.
+- Notifications are suppressed when running as SwiftPM to avoid UNUserNotificationCenter crash in non-bundled contexts.
+
+Xcode menubar target (recommended for release):
+1) Open `q-status-menubar/Package.swift` in Xcode.
+[2025-09-09T19:54:51] tokens used: 1049
+
+[2025-09-09T19:54:59] thinking
+
+**Optimizing data updates**
+
+It might be overwhelming to scan all messages every time there's an update. Instead, I think we can update periodically, like every 60 seconds, and maintain aggregated counts. I'll propose using a SQLite virtual table or an in-memory snapshot, tracking the last seen row ID. Since we can't create tables in the DB, we can manage our own snapshot on disk, possibly using YAML or SQLite, to efficiently store aggregated token numbers. This way, we can meet the requirements for efficiency and low overhead.
+**Simplifying SQL computations**
+
+To simplify, I think I can use SQL with `json_each` to compute the last interaction timestamps per conversation and calculate character counts for the entire conversation. For splitting periods, I need to sum tokens from history entries that have assistant and user messages from the last day, week, or month. Using a JSON path, I’ll concatenate character counts to estimate totals and approximate per-message tokens by dividing the length of the entire message object by 4. I’ll extract timestamps properly as well.
+**Presenting a fallback strategy**
+
+I'll present a fallback chain using `COALESCE` to extract various timestamps from the JSON data, like those from the assistant or user. If the data is in ISO-8601 format, I might convert it to a Unix epoch using `strftime('%s', ...)`, but since SQLite JSON1 doesn't parse datetimes, I can use `CAST` with `datetime()` or store it as a string. Additionally, if JSON timestamps aren't found, I could use the SQLite 'rowid timestamp' for conversation recency. We should also make UI adjustments, like adding toggles for "Group by Folder" and an "Active last 7 days" option, plus a manual refresh button.
+**Improving the UI features**
+
+I’m thinking about widening the dropdown to 380–420 px, and for path truncation, I want to show the last two components while enabling truncation for heads using NSLineBreakMode or SwiftUI’s `truncationMode(.head)`. A helpful tooltip with the full path could be good too.
+
+Additionally, I’d like a footer that always displays metrics such as "Today," "Week," and "Month" tokens and costs, computed through a new method. I’ll update the session summary to include costs and ensure the pricing per model can be extracted and editable in settings. Lastly, should we consider showing the refresh interval within the dropdown header?
+**Enhancing UI and functionality**
+
+I’m starting with a query that groups by `model_id`, then I’ll convert characters to tokens per model and calculate costs in Swift. In the UI, I want a footer displaying tokens and costs for the day, week, and month, along with a scroll area for better visibility. For manual refresh, I’ll add a button in the dropdown header, which will force an update regardless of the data version while preventing spamming. 
+
+I should also expose the refresh interval in preferences, labeling it as "Auto refresh: 2–5s" with a stepper. I’ll widen the dropdown frame to 400 px and use `Text(cwdTail2)` with truncation for the path. Finally, I’ll ensure that the Top 5 sessions in the settings are per-session rather than aggregated.
+[2025-09-09T19:55:42] codex
+**Simplifying SQL computations**
+
+To simplify, I think I can use SQL with `json_each` to compute the last interaction timestamps per conversation and calculate character counts for the entire conversation. For splitting periods, I need to sum tokens from history entries that have assistant and user messages from the last day, week, or month. Using a JSON path, I’ll concatenate character counts to estimate totals and approximate per-message tokens by dividing the length of the entire message object by 4. I’ll extract timestamps properly as well.
+[2025-09-09T19:55:42] codex
+**Presenting a fallback strategy**
+
+I'll present a fallback chain using `COALESCE` to extract various timestamps from the JSON data, like those from the assistant or user. If the data is in ISO-8601 format, I might convert it to a Unix epoch using `strftime('%s', ...)`, but since SQLite JSON1 doesn't parse datetimes, I can use `CAST` with `datetime()` or store it as a string. Additionally, if JSON timestamps aren't found, I could use the SQLite 'rowid timestamp' for conversation recency. We should also make UI adjustments, like adding toggles for "Group by Folder" and an "Active last 7 days" option, plus a manual refresh button.
+[2025-09-09T19:55:42] codex
+**Improving the UI features**
+
+I’m thinking about widening the dropdown to 380–420 px, and for path truncation, I want to show the last two components while enabling truncation for heads using NSLineBreakMode or SwiftUI’s `truncationMode(.head)`. A helpful tooltip with the full path could be good too.
+
+Additionally, I’d like a footer that always displays metrics such as "Today," "Week," and "Month" tokens and costs, computed through a new method. I’ll update the session summary to include costs and ensure the pricing per model can be extracted and editable in settings. Lastly, should we consider showing the refresh interval within the dropdown header?
+[2025-09-09T19:55:42] codex
+**Enhancing UI and functionality**
+
+I’m starting with a query that groups by `model_id`, then I’ll convert characters to tokens per model and calculate costs in Swift. In the UI, I want a footer displaying tokens and costs for the day, week, and month, along with a scroll area for better visibility. For manual refresh, I’ll add a button in the dropdown header, which will force an update regardless of the data version while preventing spamming. 
+
+I should also expose the refresh interval in preferences, labeling it as "Auto refresh: 2–5s" with a stepper. I’ll widen the dropdown frame to 400 px and use `Text(cwdTail2)` with truncation for the path. Finally, I’ll ensure that the Top 5 sessions in the settings are per-session rather than aggregated.
+[2025-09-09T19:55:42] codex
+
+Here’s a concrete, phased plan aligned to the current codebase and user requests. It focuses on minimal, targeted changes to Core (data), State, and UI, with explicit SQL/JSON paths, performance strategies, and acceptance criteria.
+
+**Phase 1: Data & Models**
+
+- Session Split vs. Group
+  - Models.swift:
+    - Add enum `GroupMode { case perSession, byFolder }`.
+    - Extend `SessionSummary` with:
+      - `modelId: String?` (for pricing).
+      - `costUSD: Double` (computed).
+      - `lastActivity: Date?` is already present; make it accurate.
+    - Add new struct `PeriodTotals { let tokensDay: Int; let tokensWeek: Int; let tokensMonth: Int; let costsDay: Double; let costsWeek: Double; let costsMonth: Double }`.
+  - Settings.swift:
+    - Add toggles/prefs:
+      - `@Published var groupMode: GroupMode = .perSession`.
+      - `@Published var activeOnly7Days: Bool = false`.
+      - `@Published var pricingOverrides: [String: Double] = [:]` (model_id → rate per 1k), persisted to YAML.
+      - Optional: `@Published var dropdownWidth: Int = 400`.
+  - QDBReader.swift:
+    - Update fetch methods to support group/filter:
+      - `fetchSessions(limit:offset:activeSince:groupByFolder:)` where:
+        - `activeSince: Date?` (7-day filter threshold).
+        - `groupByFolder: Bool` (false default).
+      - `fetchGlobalMetrics(limitForTop:)` remains per-session for Top 5.
+      - Add `fetchPeriodTotals() -> [(modelId: String?, dayChars: Int, weekChars: Int, monthChars: Int)]` for footer (aggregated system-wide).
+    - Extract `model_id` per row via JSON1: `json_extract(value,'$.model_info.model_id')`.
+    - Accurate last activity
+      - JSON path chain for timestamps on each history item via `json_each`:
+        - `COALESCE(json_extract(je.value,'$.assistant.created_at'), json_extract(je.value,'$.assistant.timestamp'), json_extract(je.value,'$.user.created_at'), json_extract(je.value,'$.user.timestamp'), json_extract(je.value,'$.timestamp'), json_extract(je.value,'$.created_at'))` as `ts`.
+        - Convert to epoch if ISO-8601 using `strftime('%s', ... )`.
+      - Per-session last activity SQL (applied when computing last activity or filtering):
+        - CTE over `conversations c, json_each(c.value,'$.history') je` → `MAX(ts_epoch) AS last_epoch GROUP BY c.key`.
+        - Filter: `WHERE last_epoch >= ?` (7 days epoch), else fallback to `rowid`.
+      - Performance: only use `json_each` when the 7-day filter is active; otherwise stick with char-length fast path.
+    - Group-by-folder SQL
+      - Group key: `cwd = json_extract(value,'$.env_context.env_state.current_working_directory')`.
+      - Aggregate per cwd:
+        - `SUM(length(json_extract(value,'$.history')) + length(json_extract(value,'$.context_manager.context_files')) + length(json_extract(value,'$.tool_manager')) + length(json_extract(value,'$.system_prompts'))) AS chars_sum` with the existing fast-path CASE fallback to `length(value)`.
+        - `SUM(json_array_length(json_extract(value,'$.history')))` as messages.
+        - `SUM(COALESCE(json_extract(value,'$.model_info.context_window_tokens'),200000))` for aggregated window.
+        - `COUNT(*)` sessions per cwd (optional for details).
+      - Preserve Top 5 as strictly per-session (unchanged).
+    - Period splits
+      - Compute system-wide day/week/month character sums in one pass using `json_each`:
+        - Pre-calc thresholds as epoch in Swift:
+          - dayStart = today at 00:00 local
+          - weekStart = Monday 00:00 (or 7 days rolling) — choose rolling (last 7) for clarity and performance
+          - monthStart = first of month 00:00
+        - SQL:
+          - CTE `hist AS (SELECT c.key, json_extract(c.value,'$.model_info.model_id') AS model_id, je.value AS msg, length(je.value) AS msg_chars, COALESCE(strftime('%s', <ts_chain>), NULL) AS ts_epoch FROM conversations c, json_each(c.value,'$.history') je)`
+          - Aggregation by `model_id`:
+            - `SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS day_chars`
+            - `SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS week_chars`
+            - `SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS month_chars`
+          - Return rows grouped by model_id; convert to tokens (chars/4) and cost in Swift using pricing overrides.
+
+- TokenEstimator.swift
+  - No changes to existing breakdown methods.
+  - Keep 4:1 char→token heuristic as primary.
+
+- CostEstimator.swift
+  - No code changes; reuse for session/period costs.
+
+**Phase 2: Coordinator & State**
+
+- UpdateCoordinator.swift
+  - Add state for filters/toggles:
+    - Bind to `settings.groupMode` and `settings.activeOnly7Days`.
+  - Manual refresh
+    - Add `public func refreshNow()` to force a cycle: call `reader.dataVersion()`, then `fetchLatestUsage()`, sessions, and `fetchGlobalMetrics()` and `fetchPeriodTotals()` ignoring the dataVersion equality.
+    - Add `lastUpdated: Date` on `UsageViewModel` for UI.
+  - Fetch sessions with new parameters:
+    - `await reader.fetchSessions(limit: 50, offset: page*50, activeSince: settings.activeOnly7Days ? Date().addingTimeInterval(-7*86400) : nil, groupByFolder: settings.groupMode == .byFolder)`
+  - Apply per-session cost
+    - When mapping sessions, compute:
+      - `rate = settings.pricingOverrides[modelId] ?? settings.costRatePer1kTokensUSD`
+      - `costUSD = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)`
+    - Sum page totals and store on view model:
+      - `viewModel.pageCostUSD`, `viewModel.globalCostUSD` (if needed).
+  - Period metrics footer
+    - Create `viewModel.periodTotals: PeriodTotals` and update each refresh (but not every 2–5s; throttle to every 60s unless user clicks Refresh).
+    - Efficiently recompute: a) only when dataVersion changes OR b) at 60s cadence to minimize load.
+    - Compute tokens per model from `fetchPeriodTotals`, then cost via overrides, then sum to day/week/month totals.
+
+- ViewModel (UsageViewModel)
+  - Add published:
+    - `groupMode: GroupMode`, `activeOnly7Days: Bool`
+    - `pageCostUSD: String`, `globalCostUSD: String`
+    - `periodTotals: PeriodTotals` or separate `tokensDay/Week/Month` and `costsDay/Week/Month`
+    - `lastUpdated: Date?`
+  - Keep search/sort/pagination as-is.
+  - Add `onRefreshNow` closure to wire button.
+
+**Phase 3: UI Updates**
+
+- DropdownView.swift
+  - Wider dropdown
+    - `.frame(width: 400)` (or `settings.dropdownWidth`).
+    - Update `MenuBarController.popover.contentSize.width = 400`.
+  - Controls row (above sessions list):
+    - Toggles:
+      - `Picker("Group", selection: $viewModel.groupMode) { Text("Sessions").tag(.perSession); Text("Folders").tag(.byFolder) }`
+      - `Toggle("Active last 7d", isOn: $viewModel.activeOnly7Days)`
+    - Right-aligned `Refresh` button calling `viewModel.onRefreshNow?()`.
+  - Search placeholder: “Search by id or folder…”.
+  - Path truncation
+    - In `SessionRow`:
+      - Show last two components: implement `cwdTail2` using `NSString.pathComponents.suffix(2).joined(by: "/")`.
+      - `Text(cwdTail2).lineLimit(1).truncationMode(.head).help(fullCwd)`.
+  - Per-session cost
+    - In row trailing secondary text, append cost:
+      - Example: “12k / 200k • 6% • $0.03”
+  - Header: show last updated
+    - Small caption “Updated N seconds ago”.
+  - Footer: system-wide metrics (always visible)
+    - A compact horizontal grid:
+      - Today: “X tokens • $Y.ZZ”
+      - 7 days: “X tokens • $Y.ZZ”
+      - Month: “X tokens • $Y.ZZ”
+    - Use subdued style; place above Preferences/Buttons divider so it’s always visible.
+  - Top 5 Sessions
+    - Explicit caption “Top Sessions (per session)”. Ensures clarity regardless of group toggle.
+
+- SessionDetailView
+  - Show per-session cost next to tokens/usage and in the grid (“Estimated Cost”).
+
+- PreferencesWindow.swift
+  - General tab:
+    - Polling interval already present (Stepper).
+    - Add dropdown width (optional).
+  - New “Pricing” tab (optional but recommended):
+    - Default rate field.
+    - Simple editable table/list: model_id → rate/1k (persisted to YAML).
+  - Possibly add UI for default “Group by folder” and “Active last 7d” defaults.
+
+- MenuBarController.swift
+  - Update `popover.contentSize` width to 400.
+
+**SQL/JSON Paths**
+
+- Fast-path token estimation per row (existing and retained):
+  - `length(json_extract(value,'$.history'))`,
+  - `length(json_extract(value,'$.context_manager.context_files'))`,
+  - `length(json_extract(value,'$.tool_manager'))`,
+  - `length(json_extract(value,'$.system_prompts'))`,
+  - with fallback `length(value)`.
+- Model id per row:
+  - `json_extract(value,'$.model_info.model_id')`.
+- CWD per row:
+  - `json_extract(value,'$.env_context.env_state.current_working_directory')`.
+- Message timestamps within history:
+  - Use `json_each(value,'$.history') AS je`.
+  - Timestamp chain:
+    - `COALESCE(json_extract(je.value,'$.assistant.created_at'), json_extract(je.value,'$.assistant.timestamp'), json_extract(je.value,'$.user.created_at'), json_extract(je.value,'$.user.timestamp'), json_extract(je.value,'$.timestamp'), json_extract(je.value,'$.created_at'))`.
+  - Convert to epoch: `strftime('%s', <coalesce>)` if ISO-8601.
+
+Examples:
+
+- Last-activity per session (for 7-day filter and sort):
+  - CTE:
+    - `hist AS (SELECT c.key, COALESCE(strftime('%s', <ts_chain>), NULL) AS ts_epoch FROM conversations c, json_each(c.value,'$.history') je)`
+    - `last_ts AS (SELECT key, MAX(ts_epoch) AS last_epoch FROM hist GROUP BY key)`
+  - Filter: `WHERE COALESCE(last_epoch, c.rowid) >= ?` (epoch for last 7 days; fallback rowid omitted when filter is active — you can instead require last_epoch not null).
+
+- Group-by-folder:
+  - `SELECT cwd, SUM(chars) AS chars_sum, SUM(msgs) AS msgs_sum, SUM(ctx) AS ctx_sum FROM (SELECT c.key, json_extract(value,'$.env_context.env_state.current_working_directory') AS cwd, <char_sum_expr> AS chars, json_array_length(json_extract(value,'$.history')) AS msgs, COALESCE(json_extract(value,'$.model_info.context_window_tokens'),200000) AS ctx FROM conversations c) GROUP BY cwd ORDER BY chars_sum DESC LIMIT ? OFFSET ?;`
+
+- Period metrics by model:
+  - `WITH hist AS (SELECT json_extract(c.value,'$.model_info.model_id') AS model_id, COALESCE(strftime('%s', <ts_chain>), NULL) AS ts_epoch, length(je.value) AS msg_chars FROM conversations c, json_each(c.value,'$.history') je) SELECT model_id, SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS day_chars, SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS week_chars, SUM(CASE WHEN ts_epoch >= ? THEN msg_chars ELSE 0 END) AS month_chars FROM hist GROUP BY model_id;`
+
+**Performance Tactics**
+
+- JSON1 fast-path remains default for per-row tokens/messages.
+- Only scan `json_each` when:
+  - 7-day filter enabled (for lastActivity).
+  - Period footer recomputation (throttled to 60s).
+- Pagination maintained for sessions to cap rows processed (50 per page).
+- Cache last computed `periodTotals` and only recompute when:
+  - `PRAGMA data_version` changes or
+  - manual refresh or
+  - 60s elapsed.
+- Keep tokens calculation in SQLite (chars) and convert to tokens in Swift to reduce SQL complexity.
+- CPU target:
+  - Normal cycles rely on length/json_array_length (cheap).
+  - `json_each` scans are bounded (footer every ~60s; session list only when filter enabled).
+- Memory target:
+  - Avoid materializing full JSON; only lengths/timestamps are extracted.
+  - No additional in-memory stores beyond view model state.
+
+**Acceptance Criteria**
+
+- Grouping & Clarity
+  - Top 5 always per-session by tokens.
+  - Sessions list can be toggled between per-session and grouped-by-folder; default per-session.
+  - In grouped view, tokens/messages represent aggregates; usage percent uses summed context windows; row clearly labeled with folder tail; tooltip shows full path.
+
+- Active 7-Day Filter
+  - Toggle filters the sessions to only those with message activity in the last 7 days.
+  - When no timestamps are present for a session, it is excluded in “active only” mode.
+  - Sorting by “Recent” reflects last activity timestamp, not rowid.
+
+- Pricing & Costs
+  - Each session row shows estimated cost, based on tokens × rate/1k.
+  - Rate determined by model-specific override (if any), else default; model_id shown in details.
+  - Page totals show sum of session costs; global totals (if presented) reflect all sessions.
+
+- Auto/Manual Refresh
+  - Preferences shows polling interval (already present).
+  - Refresh button triggers immediate update and updates “Last updated” caption.
+  - Adaptive polling remains 2–5s based on stability (unchanged).
+
+- Footer Metrics
+  - Always-visible footer shows Today / Last 7 days / This Month totals and costs.
+  - Values update within ~60s of new activity or instantly on manual refresh.
+  - Calculations use message-level timestamps when available; otherwise, footer may show 0 for periods that cannot be inferred (documented).
+
+- UI Tweaks
+  - Dropdown is ~400 px wide; session rows use head truncation for CWD and show last 2 path components.
+  - Full path available via tooltip; “Reveal in Finder” works from details.
+  - Search and sort work in both grouping modes; search matches session id or CWD text.
+
+**Implementation Notes (file-by-file)**
+
+- q-status-menubar/Sources/Core/Models.swift
+  - Add GroupMode, extend SessionSummary, add PeriodTotals.
+
+- q-status-menubar/Sources/Core/Settings.swift
+  - Add groupMode, activeOnly7Days, pricingOverrides, dropdownWidth; persist to YAML; expose env overrides e.g., `QSTATUS_GROUP_MODE`, `QSTATUS_ACTIVE_7D`, `QSTATUS_DROPDOWN_WIDTH`. Keep defaults sane.
+
+- q-status-menubar/Sources/Core/QDBReader.swift
+  - Update `fetchSessions(limit:offset:activeSince:groupByFolder:)`:
+    - Per-session path unchanged for tokens fast-path.
+    - If `activeSince != nil`, join with `json_each` to compute last_epoch and filter; else omit.
+    - When `groupByFolder`, aggregate by cwd and sum char counts/messages/context windows.
+    - Extract `model_id` for cost; fill lastActivity using last_epoch.
+  - Add `fetchPeriodTotals()` returning [(modelId, dayChars, weekChars, monthChars)].
+
+- q-status-menubar/Sources/Core/UpdateCoordinator.swift
+  - Wire toggles from settings to view model.
+  - Add refreshNow, lastUpdated; compute per-session costs and totals; compute footer via new reader API on throttled cadence.
+
+- q-status-menubar/Sources/App/DropdownView.swift
+  - Increase width; add toggles + refresh; show per-session cost; implement cwd head truncation with tail(2) display + tooltip; add Last updated; add Footer metrics.
+
+- q-status-menubar/Sources/App/Preferences/PreferencesWindow.swift
+  - Add Group/Active defaults and Pricing tab (or include in General if keeping it simple).
+  - Persist on change; optionally expose dropdown width.
+
+- q-status-menubar/Sources/App/MenuBarController.swift
+  - Update popover width to match UI.
+
+If you’d like, I can draft the exact SQL for `fetchSessions` with/without grouping and the `fetchPeriodTotals` method signatures, then sketch the minimal Swift changes for each file.
+[2025-09-09T19:57:10] tokens used: 6840

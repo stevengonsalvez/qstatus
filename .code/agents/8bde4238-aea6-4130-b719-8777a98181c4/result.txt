@@ -1,0 +1,39 @@
+Based on my analysis of the Q-Status Menubar codebase, I've created a comprehensive enhancement plan that addresses all requested improvements while maintaining the performance targets.
+
+## Key Implementation Strategy
+
+### Phase 1: Foundation (Data & Models)
+The most critical work is enhancing the data layer to support the new features:
+- Extract activity timestamps from JSON history entries for the 7-day filter
+- Add cost calculation fields and period aggregation structures
+- Implement session grouping logic at the data level
+
+### Phase 2: Core Features
+Build the main functionality on the enhanced data model:
+- Session grouping toggle (per-session default, folder aggregation optional)
+- Active sessions filter with proper timestamp extraction
+- System-wide metrics footer with efficient period calculations
+- Manual refresh capability with exposed interval settings
+
+### Phase 3: UI Refinements
+Improve the user experience:
+- Wider dropdown (400px) for better readability
+- Smart path truncation showing last 2 components
+- Cost display integration throughout the UI
+- Enhanced visual hierarchy and activity indicators
+
+### Phase 4: Performance Optimization
+Ensure the app remains lightweight:
+- Batch SQL queries using JSON1 extensions
+- Implement caching with appropriate TTLs
+- Use incremental deltas for period metrics to minimize DB reads
+
+## Technical Highlights
+
+**Activity Detection**: Extract timestamps from `history` array entries in JSON, with rowid fallback
+**Cost Calculation**: Per-session using configurable rates, with model-specific pricing support
+**Period Metrics**: Efficient day/week/month aggregation using snapshot deltas
+**Path Display**: Show tail components (e.g., "project/src") with full path in tooltip
+**Performance**: Maintain <1% CPU idle, <5% active, <50MB memory through careful query optimization
+
+This plan provides a clear path to implement all requested features while keeping the app performant and maintainable. The phased approach allows for incremental development and testing.

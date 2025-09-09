@@ -29,6 +29,8 @@ public struct SessionSummary: Identifiable, Sendable {
     public let state: SessionState
     public let internalRowID: Int64?
     public let hasCompactionIndicators: Bool
+    public let modelId: String?
+    public let costUSD: Double
 }
 
 public struct GlobalMetrics: Sendable {

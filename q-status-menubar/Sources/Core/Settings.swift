@@ -22,6 +22,12 @@ public final class SettingsStore: ObservableObject {
     // Cost estimation
     @Published public var costRatePer1kTokensUSD: Double = 0.0025
     @Published public var costModelName: String = "q-default"
+    @Published public var modelPricing: [String: Double] = [:]
+
+    // Filters & grouping
+    @Published public var groupByFolder: Bool = false
+    @Published public var showActiveLast7Days: Bool = false
+    @Published public var refreshIntervalSeconds: Int = 3
 
     public init() {
         loadFromDisk()
@@ -46,6 +52,14 @@ public final class SettingsStore: ObservableObject {
                     if let limit = dict["session_token_limit"] as? Int { self.sessionTokenLimit = limit }
                     if let rate = dict["cost_rate_per_1k_tokens_usd"] as? Double { self.costRatePer1kTokensUSD = rate }
                     if let model = dict["cost_model_name"] as? String { self.costModelName = model }
+                    if let mp = dict["model_pricing"] as? [String: Any] {
+                        var out: [String: Double] = [:]
+                        for (k,v) in mp { if let dv = v as? Double { out[k] = dv } }
+                        self.modelPricing = out
+                    }
+                    if let gb = dict["group_by_folder"] as? Bool { self.groupByFolder = gb }
+                    if let act = dict["show_active_last_7_days"] as? Bool { self.showActiveLast7Days = act }
+                    if let ref = dict["refresh_interval_seconds"] as? Int { self.refreshIntervalSeconds = ref }
                 }
             }
         } catch {
@@ -66,7 +80,11 @@ public final class SettingsStore: ObservableObject {
             "color_scheme": colorScheme.rawValue,
             "session_token_limit": sessionTokenLimit,
             "cost_rate_per_1k_tokens_usd": costRatePer1kTokensUSD,
-            "cost_model_name": costModelName
+            "cost_model_name": costModelName,
+            "model_pricing": modelPricing,
+            "group_by_folder": groupByFolder,
+            "show_active_last_7_days": showActiveLast7Days,
+            "refresh_interval_seconds": refreshIntervalSeconds
         ]
         do {
             let yaml = try Yams.dump(object: dict)
@@ -89,6 +107,9 @@ public final class SettingsStore: ObservableObject {
         if let s = env["QSTATUS_TOKEN_LIMIT"], let v = Int(s) { sessionTokenLimit = v }
         if let s = env["QSTATUS_COST_RATE_1K"], let v = Double(s) { costRatePer1kTokensUSD = v }
         if let s = env["QSTATUS_COST_MODEL" ] { costModelName = s }
+        if let s = env["QSTATUS_GROUP_BY_FOLDER"], let v = Bool(fromString: s) { groupByFolder = v }
+        if let s = env["QSTATUS_ACTIVE_7D"], let v = Bool(fromString: s) { showActiveLast7Days = v }
+        if let s = env["QSTATUS_REFRESH_SECS"], let v = Int(s) { refreshIntervalSeconds = v }
     }
 
     private func configURL() -> URL {

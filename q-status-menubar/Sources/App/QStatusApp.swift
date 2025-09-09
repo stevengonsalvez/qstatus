@@ -30,5 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settings.notificationsEnabled {
             Task { await Notifier.requestAuthorization() }
         }
+        // Expose settings and refresh to the view model for UI toggles/buttons
+        coordinator.viewModel.settings = settings
+        coordinator.viewModel.forceRefresh = { [weak coordinator] in
+            coordinator?.manualRefresh()
+        }
     }
 }

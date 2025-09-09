@@ -22,15 +22,19 @@ public enum TokenEstimator {
     }
 
     // Slow-path: parse a JSON string and estimate by deep character count
-    public static func estimate(from jsonString: String) -> (tokens: Int, messages: Int, cwd: String?, contextWindow: Int?) {
+    public static func estimate(from jsonString: String) -> (tokens: Int, messages: Int, cwd: String?, contextWindow: Int?, modelId: String?) {
         var totalChars = 0
         var messages = 0
         var cwd: String? = nil
         var contextWindow: Int? = nil
+        var modelId: String? = nil
 
         if let data = jsonString.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let modelInfo = obj["model_info"] as? [String: Any], let cw = modelInfo["context_window_tokens"] as? Int { contextWindow = cw }
+            if let modelInfo = obj["model_info"] as? [String: Any] {
+                if let cw = modelInfo["context_window_tokens"] as? Int { contextWindow = cw }
+                if let mid = modelInfo["model_id"] as? String { modelId = mid }
+            }
             if let env = obj["env_context"] as? [String: Any],
                let es = env["env_state"] as? [String: Any],
                let path = es["current_working_directory"] as? String { cwd = path }
@@ -45,11 +49,11 @@ public enum TokenEstimator {
         }
 
         let tokens = Int((Double(totalChars) / charsPerToken).rounded())
-        return (tokens, messages, cwd, contextWindow)
+        return (tokens, messages, cwd, contextWindow, modelId)
     }
 
     // Slow-path with breakdown for details view
-    public static func estimateBreakdown(from jsonString: String) -> (totalTokens: Int, messages: Int, cwd: String?, contextWindow: Int?, historyTokens: Int, contextFilesTokens: Int, toolsTokens: Int, systemTokens: Int, compactionMarkers: Bool) {
+    public static func estimateBreakdown(from jsonString: String) -> (totalTokens: Int, messages: Int, cwd: String?, contextWindow: Int?, historyTokens: Int, contextFilesTokens: Int, toolsTokens: Int, systemTokens: Int, compactionMarkers: Bool, modelId: String?) {
         var historyChars = 0
         var ctxFilesChars = 0
         var toolsChars = 0
@@ -57,11 +61,15 @@ public enum TokenEstimator {
         var messages = 0
         var cwd: String? = nil
         var contextWindow: Int? = nil
+        var modelId: String? = nil
 
         var markers = false
         if let data = jsonString.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let modelInfo = obj["model_info"] as? [String: Any], let cw = modelInfo["context_window_tokens"] as? Int { contextWindow = cw }
+            if let modelInfo = obj["model_info"] as? [String: Any] {
+                if let cw = modelInfo["context_window_tokens"] as? Int { contextWindow = cw }
+                if let mid = modelInfo["model_id"] as? String { modelId = mid }
+            }
             if let env = obj["env_context"] as? [String: Any],
                let es = env["env_state"] as? [String: Any],
                let path = es["current_working_directory"] as? String { cwd = path }
@@ -92,7 +100,8 @@ public enum TokenEstimator {
                 Int((Double(ctxFilesChars) / charsPerToken).rounded()),
                 Int((Double(toolsChars) / charsPerToken).rounded()),
                 Int((Double(sysChars) / charsPerToken).rounded()),
-                markers)
+                markers,
+                modelId)
     }
 
     private static func deepCount(_ any: Any) -> Int {

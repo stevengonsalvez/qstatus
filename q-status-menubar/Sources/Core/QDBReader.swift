@@ -121,7 +121,7 @@ public actor QDBReader {
 
     // MARK: - Sessions enumeration
 
-    public func fetchSessions(limit: Int = 50, offset: Int = 0) async throws -> [SessionSummary] {
+    public func fetchSessions(limit: Int = 50, offset: Int = 0, groupByFolder: Bool = false, activeOnly: Bool = false) async throws -> [SessionSummary] {
         try await openIfNeeded()
         guard let dbPool else { return [] }
 
@@ -130,20 +130,43 @@ public actor QDBReader {
 
         if supportsJSON1 {
             return try await dbPool.read { db in
+                // Limit first, then expand last_ts via json_each only for the page subset
                 let sql = """
-                SELECT key,
-                       COALESCE(json_extract(value,'$.model_info.context_window_tokens'), 200000) AS ctx_tokens,
-                       COALESCE(json_array_length(json_extract(value,'$.history')), 0) AS msg_count,
-                       json_extract(value,'$.env_context.env_state.current_working_directory') AS cwd,
-                       COALESCE(length(json_extract(value,'$.history')), 0) AS history_chars,
-                       COALESCE(length(json_extract(value,'$.context_manager.context_files')), 0) AS ctxfiles_chars,
-                       COALESCE(length(json_extract(value,'$.tool_manager')), 0) AS tools_chars,
-                       COALESCE(length(json_extract(value,'$.system_prompts')), 0) AS sys_chars,
-                       COALESCE(length(value), 0) AS value_chars,
-                       rowid AS internal_rowid
+                WITH page AS (
+                  SELECT key, value, rowid AS internal_rowid
                   FROM conversations
-                 ORDER BY rowid DESC
-                 LIMIT ? OFFSET ?;
+                  ORDER BY rowid DESC
+                  LIMIT ? OFFSET ?
+                ), last AS (
+                  SELECT p.key AS key,
+                         MAX(
+                           COALESCE(
+                             json_extract(h.value,'$.assistant.timestamp'),
+                             json_extract(h.value,'$.assistant.created_at'),
+                             json_extract(h.value,'$.user.timestamp'),
+                             json_extract(h.value,'$.user.created_at')
+                           )
+                         ) AS last_ts
+                  FROM page p
+                  LEFT JOIN json_each(p.value,'$.history') AS h
+                  ON 1
+                  GROUP BY p.key
+                )
+                SELECT p.key,
+                       COALESCE(json_extract(p.value,'$.model_info.context_window_tokens'), 200000) AS ctx_tokens,
+                       COALESCE(json_array_length(json_extract(p.value,'$.history')), 0) AS msg_count,
+                       json_extract(p.value,'$.env_context.env_state.current_working_directory') AS cwd,
+                       json_extract(p.value,'$.model_info.model_id') AS model_id,
+                       COALESCE(length(json_extract(p.value,'$.history')), 0) AS history_chars,
+                       COALESCE(length(json_extract(p.value,'$.context_manager.context_files')), 0) AS ctxfiles_chars,
+                       COALESCE(length(json_extract(p.value,'$.tool_manager')), 0) AS tools_chars,
+                       COALESCE(length(json_extract(p.value,'$.system_prompts')), 0) AS sys_chars,
+                       COALESCE(length(p.value), 0) AS value_chars,
+                       p.internal_rowid,
+                       l.last_ts
+                FROM page p
+                LEFT JOIN last l ON l.key = p.key
+                ORDER BY p.internal_rowid DESC;
                 """
                 var results: [SessionSummary] = []
                 let rows = try Row.fetchAll(db, sql: sql, arguments: [limit, offset])
@@ -152,11 +175,14 @@ public actor QDBReader {
                     let ctxTokens: Int = r["ctx_tokens"] ?? 200000
                     let msgCount: Int = r["msg_count"] ?? 0
                     let cwd: String? = r["cwd"]
+                    let modelId: String? = r["model_id"]
                     let historyChars: Int = r["history_chars"] ?? 0
                     let ctxFilesChars: Int = r["ctxfiles_chars"] ?? 0
                     let toolsChars: Int = r["tools_chars"] ?? 0
                     let sysChars: Int = r["sys_chars"] ?? 0
                     let fallbackChars: Int = r["value_chars"] ?? 0
+                    let lastTS: String? = r["last_ts"]
+                    let lastDate: Date? = ISO8601DateFormatter().date(from: lastTS ?? "")
 
                     let breakdown = TokenEstimator.Breakdown(historyChars: historyChars,
                                                              contextFilesChars: ctxFilesChars,
@@ -167,9 +193,23 @@ public actor QDBReader {
                     let usage = ctxTokens > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctxTokens))*100.0)) : 0
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     let rowid: Int64? = r["internal_rowid"]
-                    results.append(SessionSummary(id: key, cwd: cwd, tokensUsed: tokens, contextWindow: ctxTokens, usagePercent: usage, messageCount: msgCount, lastActivity: now, state: state, internalRowID: rowid, hasCompactionIndicators: false))
+                    results.append(SessionSummary(id: key, cwd: cwd, tokensUsed: tokens, contextWindow: ctxTokens, usagePercent: usage, messageCount: msgCount, lastActivity: lastDate ?? now, state: state, internalRowID: rowid, hasCompactionIndicators: false, modelId: modelId, costUSD: 0.0))
                 }
-                return results
+                // Active filter in Swift
+                let filtered = activeOnly ? results.filter { ($0.lastActivity ?? now) >= now.addingTimeInterval(-7*24*3600) } : results
+                if groupByFolder {
+                    // Aggregate by cwd
+                    let grouped = Dictionary(grouping: filtered, by: { $0.cwd ?? "" })
+                    var agg: [SessionSummary] = []
+                    for (cwd, arr) in grouped {
+                        let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
+                        let ctx = 200_000
+                        let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0
+                        agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
+                    }
+                    return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
+                }
+                return filtered
             }
         } else {
             // Fallback: fetch key/value and estimate in Swift for the page
@@ -183,9 +223,22 @@ public actor QDBReader {
                     let ctx = est.contextWindow ?? 200_000
                     let usage = ctx > 0 ? min(100.0, max(0.0, (Double(est.tokens)/Double(ctx))*100.0)) : 0
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
-                    results.append(SessionSummary(id: key, cwd: est.cwd, tokensUsed: est.tokens, contextWindow: ctx, usagePercent: usage, messageCount: est.messages, lastActivity: now, state: state, internalRowID: nil, hasCompactionIndicators: false))
+                    let lastDate: Date? = nil // unknown in fallback
+                    results.append(SessionSummary(id: key, cwd: est.cwd, tokensUsed: est.tokens, contextWindow: ctx, usagePercent: usage, messageCount: est.messages, lastActivity: lastDate ?? now, state: state, internalRowID: nil, hasCompactionIndicators: false, modelId: est.modelId, costUSD: 0.0))
                 }
-                return results
+                let filtered = activeOnly ? results.filter { ($0.lastActivity ?? now) >= now.addingTimeInterval(-7*24*3600) } : results
+                if groupByFolder {
+                    let grouped = Dictionary(grouping: filtered, by: { $0.cwd ?? "" })
+                    var agg: [SessionSummary] = []
+                    for (cwd, arr) in grouped {
+                        let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
+                        let ctx = 200_000
+                        let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0
+                        agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
+                    }
+                    return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
+                }
+                return filtered
             }
         }
     }
@@ -194,17 +247,17 @@ public actor QDBReader {
         try await openIfNeeded()
         guard let dbPool else { return nil }
         return try await dbPool.read { db in
-            if let row = try Row.fetchOne(db, sql: "SELECT value, rowid FROM conversations WHERE key = ?", arguments: [key]) {
-                let value: String? = row["value"]
-                let rowid: Int64? = row["rowid"]
-                guard let json = value else { return nil }
-                let breakdown = TokenEstimator.estimateBreakdown(from: json)
-                let ctx = breakdown.contextWindow ?? 200_000
-                let usage = ctx > 0 ? min(100.0, max(0.0, (Double(breakdown.totalTokens)/Double(ctx))*100.0)) : 0
-                let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
-                let summary = SessionSummary(id: key, cwd: breakdown.cwd, tokensUsed: breakdown.totalTokens, contextWindow: ctx, usagePercent: usage, messageCount: breakdown.messages, lastActivity: Date(), state: state, internalRowID: rowid, hasCompactionIndicators: breakdown.compactionMarkers)
-                return SessionDetails(summary: summary, historyTokens: breakdown.historyTokens, contextFilesTokens: breakdown.contextFilesTokens, toolsTokens: breakdown.toolsTokens, systemTokens: breakdown.systemTokens)
-            }
+                if let row = try Row.fetchOne(db, sql: "SELECT value, rowid FROM conversations WHERE key = ?", arguments: [key]) {
+                    let value: String? = row["value"]
+                    let rowid: Int64? = row["rowid"]
+                    guard let json = value else { return nil }
+                    let breakdown = TokenEstimator.estimateBreakdown(from: json)
+                    let ctx = breakdown.contextWindow ?? 200_000
+                    let usage = ctx > 0 ? min(100.0, max(0.0, (Double(breakdown.totalTokens)/Double(ctx))*100.0)) : 0
+                    let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
+                    let summary = SessionSummary(id: key, cwd: breakdown.cwd, tokensUsed: breakdown.totalTokens, contextWindow: ctx, usagePercent: usage, messageCount: breakdown.messages, lastActivity: Date(), state: state, internalRowID: rowid, hasCompactionIndicators: breakdown.compactionMarkers, modelId: breakdown.modelId, costUSD: 0.0)
+                    return SessionDetails(summary: summary, historyTokens: breakdown.historyTokens, contextFilesTokens: breakdown.contextFilesTokens, toolsTokens: breakdown.toolsTokens, systemTokens: breakdown.systemTokens)
+                }
             return nil
         }
     }
@@ -291,7 +344,7 @@ public actor QDBReader {
                     let tokens = Int((Double(chars)/4.0).rounded())
                     let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0.0
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
-                    top.append(SessionSummary(id: key, cwd: nil, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: 0, lastActivity: nil, state: state, internalRowID: nil, hasCompactionIndicators: false))
+                    top.append(SessionSummary(id: key, cwd: nil, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: 0, lastActivity: nil, state: state, internalRowID: nil, hasCompactionIndicators: false, modelId: nil, costUSD: 0.0))
                 }
                 return GlobalMetrics(totalSessions: totalSessions, totalTokens: totalTokens, sessionsNearLimit: nearCount, topHeavySessions: top)
             }

@@ -61,7 +61,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         let snapshot = try await self.reader.fetchLatestUsage()
                         await self.append(snapshot: snapshot)
                         // Also refresh session list (first page)
-                        if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50) {
+                        if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days) {
                             await self.applySessions(sessions)
                         }
                         // Refresh global totals (aggregated across all sessions)
@@ -73,10 +73,25 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     // TODO: surface error state
                 }
                 // Adaptive polling based on stability
-                let base = max(1, self.settings.updateInterval)
+                let base = max(1, self.settings.refreshIntervalSeconds)
                 let interval = min(5, base + min(2, self.stableCycles))
                 try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
             }
+        }
+    }
+
+    // Manual refresh bypassing data_version gate
+    public func manualRefresh() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let snapshot = try await self.reader.fetchLatestUsage()
+                await self.append(snapshot: snapshot)
+                if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days) {
+                    await self.applySessions(sessions)
+                }
+                await self.refreshGlobalTotals()
+            } catch { /* ignore */ }
         }
     }
 
@@ -145,7 +160,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             // update metrics cache
             lastSessionMetrics[s.id] = (tokens: s.tokensUsed, messages: s.messageCount, usage: s.usagePercent)
-            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: s.contextWindow, usagePercent: s.usagePercent, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker)
+            // Compute per-session cost with model-specific override when available
+            let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+            let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
+            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: s.contextWindow, usagePercent: s.usagePercent, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
         }
         viewModel.sessions = mapped
         // Global totals for header
@@ -153,6 +171,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
         viewModel.totalTokens = totalTokens
         viewModel.totalSessions = mapped.count
         viewModel.sessionsNearLimit = mapped.filter { $0.usagePercent >= 90 }.count
+        // Per-session cost accumulation
+        let pageCost = mapped.reduce(0.0) { $0 + sToCost($1) }
+        viewModel.pageCost = CostEstimator.formatUSD(pageCost)
+    }
+
+    private func sToCost(_ s: SessionSummary) -> Double {
+        let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+        return CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
     }
 
     private func loadAllSessions(page: Int) async {
@@ -179,6 +205,22 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 viewModel.globalSessions = global.totalSessions
                 viewModel.globalNearLimit = global.sessionsNearLimit
                 viewModel.globalTop = global.topHeavySessions
+                // Snapshot-delta accumulation for Today/Week/Month (approximate)
+                let delta = max(0, global.totalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
+                viewModel._lastGlobalTotalTokens = global.totalTokens
+                let now = Date()
+                if Calendar.current.isDateInToday(viewModel._lastTotalsDate ?? now) == false {
+                    viewModel.tokensToday = 0; viewModel.costToday = 0
+                    viewModel._lastTotalsDate = now
+                }
+                viewModel.tokensToday += delta
+                let defaultRate = self.settings.costRatePer1kTokensUSD
+                viewModel.costToday += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
+                // For week/month, accumulate deltas (rolling); refine with JSON1 in a later pass
+                viewModel.tokensWeek += delta
+                viewModel.tokensMonth += delta
+                viewModel.costWeek += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
+                viewModel.costMonth += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
             }
         } catch { /* ignore */ }
     }
@@ -198,11 +240,22 @@ public final class UsageViewModel: ObservableObject {
     @Published public var totalTokens: Int = 0
     @Published public var totalSessions: Int = 0
     @Published public var sessionsNearLimit: Int = 0
+    @Published public var pageCost: String = "$—"
     // Global totals across all sessions
     @Published public var globalTokens: Int = 0
     @Published public var globalSessions: Int = 0
     @Published public var globalNearLimit: Int = 0
     @Published public var globalTop: [SessionSummary] = []
+    // Period metrics (approximate via snapshot deltas)
+    @Published public var tokensToday: Int = 0
+    @Published public var tokensWeek: Int = 0
+    @Published public var tokensMonth: Int = 0
+    @Published public var costToday: Double = 0
+    @Published public var costWeek: Double = 0
+    @Published public var costMonth: Double = 0
+    // Internal trackers
+    public var _lastGlobalTotalTokens: Int? = nil
+    public var _lastTotalsDate: Date? = nil
     @Published public var searchQuery: String = ""
     @Published public var sort: SessionSort = .lastActivity
     @Published public var selectedSession: SessionDetails? = nil
@@ -215,6 +268,9 @@ public final class UsageViewModel: ObservableObject {
     public var onOpenAll: (() -> Void)? = nil
     public var onNextPage: (() -> Void)? = nil
     public var onPrevPage: (() -> Void)? = nil
+    // Access to settings for UI toggles
+    public var settings: SettingsStore? = nil
+    public var forceRefresh: (() -> Void)? = nil
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {
