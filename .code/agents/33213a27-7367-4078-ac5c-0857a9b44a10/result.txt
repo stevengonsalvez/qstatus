@@ -1,0 +1,319 @@
+# Q-Status Menubar Enhancement Plan: Per-Session Details & Context Usage
+
+## Executive Summary
+Enhance the existing Q-Status menubar app to show ALL conversation sessions with detailed metrics including CWD, token usage, context utilization percentage, and compaction awareness indicators. This plan maintains the current architecture while adding comprehensive session enumeration and analysis capabilities.
+
+## Phase 1: Data Model & Core Infrastructure (Days 1-3)
+
+### 1.1 Enhanced Data Models
+```swift
+// Models.swift additions
+struct SessionSummary: Identifiable {
+    let id: String  // conversation key
+    let cwd: String?  // from env_context.env_state.current_working_directory
+    let estimatedTokens: Int
+    let contextWindowSize: Int  // default 200,000
+    let contextUsagePercent: Double
+    let messageCount: Int
+    let lastActivityTime: Date
+    let isCompacting: Bool
+    let compactionRisk: CompactionRisk
+    
+    enum CompactionRisk {
+        case low      // <70%
+        case medium   // 70-90%
+        case high     // 90-95%
+        case critical // >95%
+    }
+}
+
+struct SessionDetails {
+    let summary: SessionSummary
+    let historyTokens: Int
+    let contextFilesTokens: Int
+    let toolsTokens: Int
+    let systemPromptTokens: Int
+    let recentMessages: [MessagePreview]
+}
+
+struct GlobalMetrics {
+    let totalSessions: Int
+    let totalTokens: Int
+    let averageTokensPerMinute: Double?
+    let topHeavySessions: [SessionSummary]  // Top 5 by token usage
+    let sessionsNearLimit: Int  // Count of sessions >90%
+}
+```
+
+### 1.2 QDBReader Enhancements
+```swift
+// QDBReader.swift API additions
+extension QDBReader {
+    /// Fetch all sessions with pagination
+    func fetchSessions(limit: Int = 50, offset: Int = 0) async throws -> [SessionSummary]
+    
+    /// Fetch detailed session info
+    func fetchSession(key: String) async throws -> SessionDetails
+    
+    /// Get global metrics across all sessions
+    func fetchGlobalMetrics() async throws -> GlobalMetrics
+    
+    /// Stream sessions for memory-efficient processing
+    func streamSessions(batchSize: Int = 10, 
+                       handler: (SessionSummary) async -> Void) async throws
+}
+```
+
+### 1.3 Token Estimation Engine
+```swift
+// New file: TokenEstimator.swift
+struct TokenEstimator {
+    /// Fast character counting without full JSON decode
+    static func estimateFromJSON(_ json: String) -> TokenEstimate {
+        // Use streaming JSON parser to count chars in specific fields
+        // Avoid loading entire JSON into memory
+    }
+    
+    /// Optimized for partial JSON scanning
+    static func estimatePartial(_ json: String, 
+                               fields: Set<JSONPath>) -> Int
+    
+    struct TokenEstimate {
+        let total: Int
+        let breakdown: TokenBreakdown
+    }
+    
+    struct TokenBreakdown {
+        let history: Int
+        let contextFiles: Int
+        let tools: Int
+        let systemPrompts: Int
+    }
+}
+```
+
+## Phase 2: Performance Optimization (Days 4-5)
+
+### 2.1 Caching Strategy
+```swift
+// New file: SessionCache.swift
+actor SessionCache {
+    private var summaries: [String: SessionSummary] = [:]
+    private var lastDataVersion: Int64 = 0
+    
+    func getCachedOrFetch(key: String) async -> SessionSummary?
+    func invalidateIfNeeded(currentVersion: Int64)
+    func preloadTopSessions(count: Int) async
+}
+```
+
+### 2.2 Incremental Updates
+- Use `PRAGMA data_version` to detect changes
+- Only re-parse changed conversations (track by value hash)
+- Maintain in-memory cache of session summaries
+- Background queue for JSON parsing
+
+### 2.3 Memory Management
+- Streaming JSON parser to avoid loading full blobs
+- Pagination with 50-session chunks
+- LRU cache for detailed views (max 10 sessions)
+- Aggressive cleanup of parsed JSON after metric extraction
+
+## Phase 3: UI Implementation (Days 6-8)
+
+### 3.1 Enhanced Dropdown Design
+```swift
+// DropdownView.swift enhancements
+struct EnhancedDropdownView: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            // Global summary header
+            GlobalMetricsHeader()
+            
+            Divider()
+            
+            // Search/filter bar
+            SessionSearchBar()
+            
+            // Session list with virtual scrolling
+            SessionListView()
+                .frame(maxHeight: 400)
+            
+            Divider()
+            
+            // Actions footer
+            ActionsFooter()
+        }
+    }
+}
+
+struct SessionRowView: View {
+    let session: SessionSummary
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(session.id)
+                    .font(.system(.caption, design: .monospaced))
+                if let cwd = session.cwd {
+                    Label(cwd, systemImage: "folder")
+                        .font(.caption2)
+                }
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing) {
+                ContextUsageBar(percent: session.contextUsagePercent)
+                Text("\(session.estimatedTokens) tokens")
+                    .font(.caption2)
+            }
+            
+            // Compaction indicator
+            if session.isCompacting {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+}
+```
+
+### 3.2 Compaction Awareness UI
+- Color-coded usage bars: green (<70%), yellow (70-90%), orange (90-95%), red (>95%)
+- Pulsing animation when compaction detected
+- Warning banner when multiple sessions near limit
+- Notification when compaction completes
+
+## Phase 4: Compaction Detection (Days 9-10)
+
+### 4.1 Detection Logic
+```swift
+struct CompactionDetector {
+    /// Analyze JSON for compaction indicators
+    static func detectCompaction(json: String) -> CompactionState {
+        // Check for:
+        // - ContextWindowOverflow in recent messages
+        // - Truncation markers in history
+        // - Sudden drop in context files
+        // - Compaction status fields if present
+    }
+    
+    /// Monitor for compaction patterns
+    static func inferCompactionRisk(usage: Double, 
+                                   messageRate: Double) -> CompactionRisk
+}
+```
+
+### 4.2 Heuristics
+- Pre-overflow warning at ≥90% usage
+- Detect ongoing compaction: sudden token count drop
+- Post-compaction: truncation markers in JSON
+- Track compaction frequency per session
+
+## Phase 5: Testing & Quality (Days 11-12)
+
+### 5.1 Test Infrastructure
+```swift
+// Tests/CoreTests/SessionEnumerationTests.swift
+class SessionEnumerationTests: XCTestCase {
+    func testLargeDBPerformance() async
+    func testTokenEstimationAccuracy() async
+    func testCompactionDetection() async
+    func testMemoryUsageUnderLoad() async
+}
+```
+
+### 5.2 Fixture Generation
+- Synthetic DB with 100+ conversations
+- Various JSON sizes (1KB to 10MB)
+- Different compaction states
+- Edge cases: corrupted JSON, missing fields
+
+### 5.3 Performance Benchmarks
+- Target: <100ms for 50-session fetch
+- Memory: <50MB for 1000 sessions
+- CPU: <1% idle, <5% during updates
+
+## Phase 6: Migration & Rollout (Days 13-14)
+
+### 6.1 Feature Flags
+```yaml
+# config.yaml additions
+features:
+  showAllSessions: true
+  compactionWarnings: true
+  sessionDetails: true
+  performanceMode: adaptive  # full|lite|adaptive
+```
+
+### 6.2 Graceful Degradation
+- Fallback to single-session mode on error
+- Sampling mode for very large DBs (>1000 sessions)
+- Progressive enhancement based on system resources
+
+## Risk Mitigation
+
+### Schema Changes
+- **Risk**: Q updates DB schema
+- **Mitigation**: Version detection, graceful fallback, schema validation
+
+### Large JSON Performance
+- **Risk**: Multi-MB JSON blobs cause lag
+- **Mitigation**: Streaming parser, background processing, sampling
+
+### Token Estimation Accuracy
+- **Risk**: 4:1 ratio inaccurate for certain content
+- **Mitigation**: Calibration from actual API responses when available
+
+### Memory Pressure
+- **Risk**: OOM with many large sessions
+- **Mitigation**: Pagination, streaming, aggressive caching limits
+
+## Day-by-Day Schedule
+
+**Days 1-3**: Core data model, QDBReader extensions, TokenEstimator
+- Acceptance: Can enumerate all sessions, extract metrics
+
+**Days 4-5**: Performance optimization, caching, incremental updates
+- Acceptance: <100ms response, <50MB memory
+
+**Days 6-8**: UI implementation, session list, detail views
+- Acceptance: Smooth scrolling, responsive interaction
+
+**Days 9-10**: Compaction detection and indicators
+- Acceptance: Accurate detection, clear user warnings
+
+**Days 11-12**: Testing, benchmarks, edge cases
+- Acceptance: All tests pass, performance targets met
+
+**Days 13-14**: Migration, documentation, release prep
+- Acceptance: Seamless upgrade, feature flags working
+
+## API Examples
+
+```swift
+// Fetch all sessions with metrics
+let sessions = try await reader.fetchSessions(limit: 100)
+
+// Get detailed view of specific session
+let details = try await reader.fetchSession(key: "conv_123")
+
+// Stream for large DBs
+try await reader.streamSessions(batchSize: 20) { session in
+    // Process each session
+    cache.store(session)
+}
+
+// Global metrics
+let metrics = try await reader.fetchGlobalMetrics()
+print("Total tokens across \(metrics.totalSessions) sessions: \(metrics.totalTokens)")
+```
+
+## Success Metrics
+- All sessions visible with <2s load time
+- Context usage accurate within 5% of actual
+- Compaction detection with 95% accuracy
+- Memory usage <50MB for typical use
+- CPU <1% idle, <5% active
+- User satisfaction: clear, actionable session insights

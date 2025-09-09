@@ -1,0 +1,187 @@
+Alright, Stevie, let's get this show on the road. As one of your planning agents, my job is to give you a rock-solid, no-BS execution plan. I've analyzed the requirements from `q-status-requirements.md` and the project context.
+
+Here is a pragmatic, end-to-end plan for the "Q-Status Menubar" application, optimized for a small team to deliver a high-quality MVP and beyond in roughly two weeks.
+
+My technical recommendation is to use **GRDB.swift**. It's a robust, high-performance SQLite library that excels in concurrency and provides excellent tools for handling database interactions safely, which is critical for our read-only, non-invasive requirement.
+
+---
+
+### **Q-Status Menubar: Execution Plan**
+
+This plan is broken into four phases, from core logic to public release.
+
+#### **Phase 1: Foundation & Core Logic (Days 1–3)**
+
+**Goal:** Establish a solid data layer that can read from the Q database non-invasively and calculate all required metrics. This phase is backend-only; no UI.
+
+*   **Milestone 1.1: Database Reader**
+    *   **Tasks:**
+        1.  Initialize the Swift Package Manager project. Add `GRDB.swift` as a dependency.
+        2.  Create `Core/QDBReader.swift`.
+        3.  Implement a `connect()` method that opens a read-only `DatabasePool` to `~/.aws/q/db/q.db`, enabling Write-Ahead Logging (`.walMode = .true`) and shared caching to minimize lock contention. Use `immutable=1` URI parameter if possible.
+        4.  Define simple data structures to represent the DB schema (e.g., `struct QMessage`, `struct QTokenUsage`).
+        5.  Implement `fetchLatestUsage()` to query the necessary tables (`conversation`, `message`, `message_token_usage`) and return an aggregate data structure.
+    *   **Key Signatures & Types:**
+        ```swift
+        // Core/QDBReader.swift
+        struct QUsageData {
+            let conversationId: String
+            let totalTokens: Int
+            let lastUpdate: Date
+        }
+
+        class QDBReader {
+            /// Connects to the database in a read-only, non-locking manner.
+            static func connect() throws -> DatabasePool
+
+            /// Fetches the most recent token usage data.
+            func fetchLatestUsage() async throws -> QUsageData?
+        }
+        ```
+    *   **Acceptance Criteria:**
+        *   Unit tests can connect to a fixture `q.db` file.
+        *   `fetchLatestUsage()` returns accurate data based on the fixture.
+        *   The reader fails gracefully (returns `nil` or throws a specific error) if the DB is locked or doesn't exist.
+
+*   **Milestone 1.2: Metrics & Settings**
+    *   **Tasks:**
+        1.  Create `Core/MetricsCalculator.swift` with pure functions for all business logic.
+        2.  Create `Core/Settings.swift`. Define a `Settings` struct codable from YAML/TOML. Use a library like `Yams` for parsing.
+        3.  Implement the settings precedence logic: Defaults → `~/.config/q-status/settings.yml` → Environment Variables.
+    *   **Key Signatures & Types:**
+        ```swift
+        // Core/MetricsCalculator.swift
+        struct AppMetrics {
+            let usagePercentage: Double // 0.0 to 1.0
+            let tokensRemaining: Int
+            let estimatedCost: Decimal
+            let tokensPerMinute: Double
+        }
+
+        class MetricsCalculator {
+            static func calculate(from data: QUsageData, settings: Settings) -> AppMetrics
+        }
+
+        // Core/Settings.swift
+        struct Settings: Codable {
+            var pollingIntervalSeconds: Int = 3
+            var monthlyTokenLimit: Int = 2_000_000 // Example default
+            // ... other settings
+        }
+        ```
+    *   **Acceptance Criteria:**
+        *   All `MetricsCalculator` functions have comprehensive unit tests.
+        *   `Settings` module correctly loads from a file and overrides with environment variables.
+
+---
+
+#### **Phase 2: UI Shell & Data Display (Days 4–6)**
+
+**Goal:** Get a visible application in the menu bar that displays real-time data.
+
+*   **Milestone 2.1: Menu Bar Application Shell**
+    *   **Tasks:**
+        1.  Create the Xcode project `QStatusMenubar.xcodeproj`.
+        2.  Implement `QStatusApp.swift` and a `MenuBarController` using `NSStatusItem`.
+        3.  Design a monochrome menu bar icon (e.g., a simple 'Q') and add it to `Assets.xcassets`.
+        4.  Create a basic, static SwiftUI `DropdownView.swift`.
+    *   **UI States & Flows:**
+        *   **Idle/No Q:** Dimmed icon. Tooltip: "Amazon Q database not found."
+        *   **Connecting:** Icon with a subtle spinner/animation. Tooltip: "Connecting..."
+        *   **Active:** Color-coded icon with optional badge. Tooltip: "X% of token limit used."
+        *   **Error:** Icon with '!' symbol. Tooltip: "Error reading database."
+    *   **Acceptance Criteria:** The app launches, and a static icon appears in the menu bar. Clicking it shows a placeholder dropdown.
+
+*   **Milestone 2.2: Dynamic Data Integration**
+    *   **Tasks:**
+        1.  Create an `@MainActor` `MenuBarViewModel` to orchestrate data fetching and UI updates.
+        2.  Use an `async/await` `Task` in the view model to poll `QDBReader.fetchLatestUsage()` based on the configured interval.
+        3.  Bind the `MenuBarController`'s icon/badge and the `DropdownView`'s content to the view model's published properties.
+        4.  Implement `IconBadgeRenderer.swift` to draw the percentage onto the icon dynamically.
+    *   **Acceptance Criteria:**
+        *   Menu bar icon color and badge update automatically every few seconds.
+        *   Dropdown view shows live token counts and percentages.
+        *   The UI correctly reflects the Idle, Active, and Error states.
+
+---
+
+#### **Phase 3: Core Features & User Interaction (Days 7–9)**
+
+**Goal:** Implement notifications, historical data visualization, and user preferences.
+
+*   **Milestone 3.1: Notifications & History Graph**
+    *   **Tasks:**
+        1.  Create `Core/Notifier.swift` using `UNUserNotificationCenter`.
+        2.  Implement the notification consent flow, triggered when the user first enables a threshold.
+        3.  In the view model, check thresholds after each data fetch and trigger notifications.
+        4.  Create `Core/HistoryStore.swift` to store a capped-size array of recent `QUsageData` points in memory.
+        5.  Use `Swift Charts` in `DropdownView.swift` to display a simple sparkline graph of token usage from the `HistoryStore`.
+    *   **Acceptance Criteria:**
+        *   Notifications are delivered at 70%, 90%, and 95% usage.
+        *   The dropdown displays a real-time updating graph of the last hour's usage.
+
+*   **Milestone 3.2: Preferences Window**
+    *   **Tasks:**
+        1.  Build `Preferences/PreferencesWindow.swift` using SwiftUI.
+        2.  Create a `PreferencesViewModel` to load/save the `Settings` object.
+        3.  Add controls for polling interval, notification thresholds, and "Launch at Login."
+        4.  Use `SMAppService` for a modern, reliable "Launch at Login" implementation.
+    *   **Acceptance Criteria:**
+        *   Changing a setting in the UI updates the `settings.yml` file.
+        *   The app's behavior (e.g., polling speed) changes immediately.
+        *   The "Launch at Login" checkbox correctly registers/unregisters the app.
+
+---
+
+#### **Phase 4: Polishing, Performance & Release (Days 10–12)**
+
+**Goal:** Ensure the app is robust, performant, and ready for distribution.
+
+*   **Milestone 4.1: Performance & Reliability Tuning**
+    *   **Tasks:**
+        1.  Profile the app with Instruments. Target <50MB memory and <1% idle CPU.
+        2.  Debounce or coalesce UI updates to prevent flicker and unnecessary work, especially during rapid DB changes.
+        3.  Implement exponential backoff for DB read attempts in case of persistent file locks or errors.
+        4.  Add a watchdog to detect a stale DB (no updates for >1 hour) and reflect this in the UI.
+    *   **Acceptance Criteria:**
+        *   Performance targets are met under normal conditions.
+        *   The app recovers gracefully from transient errors.
+
+*   **Milestone 4.2: Release Engineering**
+    *   **Tasks:**
+        1.  Configure code signing and hardening in Xcode.
+        2.  Set up the project for notarization.
+        3.  Write a shell script (`scripts/build-dmg.sh`) that archives, notarizes, and packages the app into a branded DMG.
+        4.  Create a Homebrew Cask definition file (`q-status-menubar.rb`).
+    *   **Acceptance Criteria:**
+        *   A fully signed and notarized DMG is produced.
+        *   `brew install --cask <path/to/cask>` successfully installs the application.
+
+---
+
+### **Key Technical Details**
+
+*   **Database Strategy:**
+    *   **Connection:** `GRDB.DatabasePool(path: dbPath, configuration: config)` where `config.readonly = true`.
+    *   **Schema Discovery:** We assume a stable schema but will wrap all DB access in `try-catch` blocks. The `QDBReader` will be the *only* module that knows about table/column names, isolating us from future changes.
+    *   **Key Queries:**
+        ```sql
+        -- Get total tokens for the most recent conversation
+        SELECT SUM(t.response_token_count)
+        FROM message_token_usage t
+        JOIN message m ON t.message_id = m.id
+        WHERE m.conversation_id = (SELECT id FROM conversation ORDER BY creation_time DESC LIMIT 1);
+        ```
+*   **Testing Strategy:**
+    *   **Unit Tests:** For `MetricsCalculator`, `Settings`, and `HistoryStore`. No dependencies, pure logic.
+    *   **Integration Tests:** For `QDBReader`. Requires a `q.db` fixture file in the test bundle with known data to verify queries.
+    *   **UI/E2E Tests:** Manual testing is sufficient for this scope. Verify all UI states, preferences, and notifications.
+*   **Risks & Mitigations:**
+    *   **Risk:** Amazon Q team changes the `q.db` schema.
+        *   **Mitigation:** Isolate all SQL and schema knowledge within `QDBReader.swift`. The app will gracefully show an error state instead of crashing. We can update one file to fix it.
+    *   **Risk:** Persistent DB lock from a running `q` command.
+        *   **Mitigation:** Use GRDB's read-only pool with WAL mode. Implement a backoff strategy. If locks persist, show a clear "DB Busy" state in the UI.
+    *   **Risk:** Performance targets are hard to meet.
+        *   **Mitigation:** Profile early (Phase 2). Use `async/await` correctly, ensure work is off the main thread, and coalesce UI updates with Combine's `debounce` or `throttle`.
+
+This plan should provide a clear path forward. Let me know if you want me to elaborate on any specific part. Let's build this thing.

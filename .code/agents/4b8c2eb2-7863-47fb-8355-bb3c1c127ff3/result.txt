@@ -1,0 +1,201 @@
+Alright, Stevie, let's cook up a plan. This is a pretty meaty feature, so we'll need to slice it up right to get it done in a couple of weeks without breaking the slick little app we've already got. I've taken a look at the files and the research summary. Here’s my take on a phased plan.
+
+### **Project: "Session-Scope" - Per-Session Visibility Enhancement**
+
+**High-Level Goal:** Evolve Q-Status from a single-conversation monitor to a multi-session dashboard, providing detailed insights into token usage, context, and cost, while maintaining its lightweight footprint.
+
+---
+
+### **Phase 1: Data Foundation & Core Logic (Week 1, Days 1-3)**
+
+This phase is all about getting the data right. We'll extend the data model and the database reader to support multiple sessions.
+
+**Day 1: Data Modeling & DB Reader Extension**
+
+*   **Goal:** Define data structures for a session and fetch all sessions from the database.
+*   **Tasks:**
+    1.  **Extend `Models.swift`:**
+        *   Create a new `SessionDetails` struct to hold per-session metrics:
+            ```swift
+            // ABOUTME: Represents the metrics and metadata for a single conversation session.
+            struct SessionDetails: Identifiable, Hashable {
+                let id: String // Conversation key
+                let cwd: String?
+                let tokenCount: Int
+                let contextWindow: Int
+                let messageCount: Int
+                let lastActivityDate: Date
+                var usagePercentage: Double {
+                    guard contextWindow > 0 else { return 0 }
+                    return Double(tokenCount) / Double(contextWindow)
+                }
+                // Add a state for compaction awareness later
+                var compactionState: CompactionState = .normal
+            }
+
+            enum CompactionState {
+                case normal
+                case warning // >= 90%
+                case compacting // Inferred
+            }
+            ```
+        *   Update the main `QMetrics` model to hold an array of these sessions: `var sessions: [SessionDetails] = []`.
+    2.  **Enhance `QDBReader.swift`:**
+        *   **New API Signature:** Implement `fetchSessions()` that reads the `conversations` table.
+            ```swift
+            // ABOUTME: Reads the Q application's SQLite database in a read-only, non-blocking manner.
+            class QDBReader {
+                // ... existing code ...
+
+                /// Fetches all conversation sessions, parsing their JSON to extract key metrics.
+                /// - Returns: An array of `SessionDetails`.
+                func fetchSessions() throws -> [SessionDetails] {
+                    // ... implementation ...
+                }
+            }
+            ```
+        *   **Implementation:** Use GRDB to query `SELECT key, value FROM conversations ORDER BY rowid DESC`. This gives us last activity sorting for free.
+        *   **Parsing:** For each row, create a `SessionDetails` object. This involves parsing the `value` (JSON blob). We'll start with `JSONDecoder` but keep performance in mind.
+
+*   **Acceptance Criteria:**
+    *   `fetchSessions()` returns an array of `SessionDetails` populated from a test database.
+    *   The `id` and `lastActivityDate` (approximated from `rowid` order) are correct.
+
+**Day 2: Token Estimation & Robust Parsing**
+
+*   **Goal:** Accurately estimate token count from JSON and handle parsing errors gracefully.
+*   **Tasks:**
+    1.  **Create `TokenEstimator.swift`:**
+        *   **API Signature:**
+            ```swift
+            // ABOUTME: Provides functions for estimating token counts from conversation JSON.
+            // MOCK: This is a mock implementation for token estimation.
+            struct TokenEstimator {
+                /// Estimates token count from a raw JSON string or data.
+                /// - Parameter jsonString: The JSON string representing the conversation.
+                /// - Returns: A tuple containing token count, message count, CWD, and context window size.
+                static func estimate(from jsonString: String) -> (tokens: Int, messages: Int, cwd: String?, contextWindow: Int) {
+                    // ... implementation ...
+                }
+            }
+            ```
+        *   **Implementation:**
+            *   Inside `estimate`, instead of a full `JSONDecoder`, we can do targeted, faster parsing. We can treat the JSON as a string and look for keys like `"content": "..."` within `history`, and sum up character lengths. This avoids building a full Swift object graph.
+            *   Calculate total characters from `history` messages, `context_manager` files, etc.
+            *   Apply the 4:1 character-to-token ratio.
+            *   Extract `model_info.context_window_tokens` (defaulting to 200,000).
+            *   Extract `env_context.env_state.current_working_directory`.
+            *   Use `try?` and provide sensible defaults if keys are missing.
+    2.  **Integrate into `QDBReader.fetchSessions()`:** Call `TokenEstimator.estimate()` for each conversation's JSON `value`.
+
+*   **Acceptance Criteria:**
+    *   `TokenEstimator` correctly calculates token counts for various synthetic JSON fixtures.
+    *   `fetchSessions` now returns `SessionDetails` with accurate token/message counts and CWD.
+    *   Handles malformed or incomplete JSON without crashing.
+
+**Day 3: Update Loop Integration & Performance Baseline**
+
+*   **Goal:** Integrate the new session data into the main update loop and establish performance metrics.
+*   **Tasks:**
+    1.  **Modify `UpdateCoordinator.swift`:**
+        *   Change `performUpdate()` to call `qdbReader.fetchSessions()` instead of the old method.
+        *   The new `QMetrics` will now contain the list of all sessions.
+        *   The overall percentage can be calculated from the *most active* session (the first one, since we sorted by `rowid`).
+    2.  **Performance Instrumentation:**
+        *   Wrap the `fetchSessions` call in `measure { ... }` to log execution time.
+        *   Log memory usage before and after the update.
+        *   **Strategy:** All DB access and parsing MUST happen on a background thread to keep the UI responsive. `UpdateCoordinator` should already be doing this.
+
+*   **Acceptance Criteria:**
+    *   The app runs, and the main status bar icon continues to show the usage for the most recent session.
+    *   Logs show update duration is within budget (e.g., <500ms for a moderately sized DB).
+    *   No new functionality is visible in the UI yet, but the underlying data pipeline is complete.
+
+---
+
+### **Phase 2: UI Overhaul (Week 1, Days 4-5)**
+
+Now we make it pretty. We'll redesign the dropdown to show the session list.
+
+**Day 4: Session List UI**
+
+*   **Goal:** Display the list of sessions in the dropdown.
+*   **Tasks:**
+    1.  **Redesign `DropdownView.swift`:**
+        *   Use a `List` or `ScrollView` to iterate over the `qMetrics.sessions` array.
+        *   For each `SessionDetails`, create a `SessionRowView`.
+        *   **`SessionRowView`:**
+            *   Display conversation ID (truncated: `key.prefix(8)`).
+            *   Display CWD if present (e.g., `~/.../my-project`).
+            *   Display a horizontal progress bar (`ProgressView`) for context usage.
+            *   Show the percentage text (e.g., "34%").
+            *   Show message count and last activity time (e.g., "25 msgs, 5m ago").
+    2.  **Overall Totals:**
+        *   At the top of the `DropdownView`, add a summary section:
+            *   Total token usage across all sessions.
+            *   Total number of active sessions.
+            *   Maybe a "Top 3 Sessions" list as a quick reference.
+
+*   **Acceptance Criteria:**
+    *   The dropdown view now shows a scrollable list of all sessions.
+    *   Each row correctly displays the metrics for one session.
+    *   The overall summary is accurate.
+
+**Day 5: Compaction Indicators & UI Polish**
+
+*   **Goal:** Add visual cues for compaction risk and refine the UI.
+*   **Tasks:**
+    1.  **Compaction Logic:**
+        *   In `UpdateCoordinator`, when processing sessions, set the `compactionState`:
+            *   If `usagePercentage >= 0.9`, set to `.warning`.
+            *   (We'll leave `.compacting` for later, as it requires inferring from messages).
+    2.  **UI for Compaction:**
+        *   In `SessionRowView`, change the `ProgressView` color based on `compactionState`: green for normal, yellow for warning.
+        *   Optionally add a warning icon (⚠️) to the row.
+    3.  **Add Settings:**
+        *   In `Settings.swift` and the `PreferencesWindow`, add toggles:
+            *   "Show Per-Session Details" (to switch between old and new UI).
+            *   "Show CWD in Session List".
+    4.  **UI Polish:** Add search/filter capabilities to the list if time permits. A simple text field that filters the `sessions` array.
+
+*   **Acceptance Criteria:**
+    *   Session rows change color at 90% usage.
+    *   The app feels responsive and looks clean.
+    *   New settings are functional.
+
+---
+
+### **Phase 3: Testing & Finalization (Week 2)**
+
+**Days 6-7: Testing**
+
+*   **Goal:** Ensure the new implementation is robust and performant.
+*   **Tasks:**
+    1.  **Unit Tests:**
+        *   Create `TokenEstimatorTests.swift` with fixtures for valid, malformed, and edge-case JSON.
+        *   Create `QDBReaderTests.swift` using an in-memory or temporary fixture database. Test `fetchSessions()` correctness.
+    2.  **Performance Tests:**
+        *   Create a script to generate a large synthetic database (e.g., 1,000+ conversations with large JSON blobs).
+        *   Run the app against this DB and verify it meets performance targets (CPU <5% on update, memory <50MB, UI remains responsive).
+
+*   **Acceptance Criteria:**
+    *   All unit tests pass.
+    *   Performance targets are met under load.
+
+**Day 8: Risk Mitigation & Refinement**
+
+*   **Goal:** Address identified risks and refine based on testing.
+*   **Risks & Mitigations:**
+    *   **Risk:** Schema Change. **Mitigation:** Our read-only approach is safe. The app should fail gracefully (e.g., show an error in the dropdown) if the schema is unrecognizable. Add checks for table/column existence in `QDBReader`.
+    *   **Risk:** Large JSON Blobs Slowing Down Parsing. **Mitigation:** The targeted string-based parsing in `TokenEstimator` helps. If still too slow, we can implement sampling (e.g., only fully parse the top 20 most recent sessions and show summary data for the rest).
+    *   **Risk:** Token Estimation Accuracy. **Mitigation:** It's an estimate, and we should label it as such in the UI ("~ tokens"). We can refine the character-counting logic to be more precise (e.g., better handling of different JSON fields).
+
+**Days 9-10: Documentation & Final Review**
+
+*   **Goal:** Finalize the feature for "release".
+*   **Tasks:**
+    *   Update `README.md` with new features.
+    *   Ensure all new code has `ABOUTME:` comments.
+    *   Code cleanup and final review.
+
+This plan gets us there incrementally, Stevie. We keep the app working the whole time and build on a solid data foundation before touching the UI. What do you think? Any of this smell funny to you?
