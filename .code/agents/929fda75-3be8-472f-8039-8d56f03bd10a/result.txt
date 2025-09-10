@@ -1,0 +1,339 @@
+# Q-Status Menubar Implementation Plan
+
+## Executive Summary
+A lightweight macOS menu bar application providing real-time Amazon Q CLI token usage monitoring through non-invasive SQLite database reads. Built with Swift 5.9+/SwiftUI, targeting 1-2 week delivery with focus on reliability, performance, and native macOS experience.
+
+## Phase 1: Foundation & Core (Days 1-3)
+
+### Milestone 1.1: Project Setup & DB Access
+**Acceptance Criteria:**
+- Xcode project builds with SPM dependencies
+- Successfully reads Q database without locks
+- Basic polling mechanism operational
+
+**Key Deliverables:**
+
+```swift
+// Sources/Core/QDBReader.swift
+class QDBReader {
+    private let dbPath = NSHomeDirectory() + "/.aws/q/db/q.db"
+    private var connection: Connection?
+    
+    func connect() async throws
+    func fetchLatestUsage() async throws -> UsageSnapshot
+    func fetchConversationHistory(limit: Int) async throws -> [Conversation]
+    private func handleWALMode() throws
+    private func attachReadOnly() throws
+}
+
+// Sources/Core/Models.swift
+struct UsageSnapshot {
+    let tokensUsed: Int
+    let conversationId: String?
+    let timestamp: Date
+    let messageCount: Int
+}
+
+struct TokenLimits {
+    static let hourly = 4000
+    static let monthly = 100000
+}
+```
+
+**Database Strategy:**
+```sql
+-- Schema discovery
+SELECT name FROM sqlite_master WHERE type='table';
+PRAGMA table_info(conversations);
+
+-- Key queries (with WAL handling)
+SELECT COUNT(*) as msg_count,
+       SUM(tokens) as total_tokens,
+       MAX(created_at) as last_activity
+FROM messages 
+WHERE conversation_id = ? 
+  AND created_at > datetime('now', '-1 hour');
+```
+
+### Milestone 1.2: Metrics Engine
+**Acceptance Criteria:**
+- Accurate token percentage calculations
+- Rate calculations (tokens/min)
+- Time-to-limit estimations
+
+```swift
+// Sources/Core/MetricsCalculator.swift
+actor MetricsCalculator {
+    private var history: RingBuffer<UsageSnapshot>
+    
+    func calculateUsagePercent(current: Int, limit: Int) -> Double
+    func calculateRate(snapshots: [UsageSnapshot]) -> Double
+    func estimateTimeToLimit(rate: Double, remaining: Int) -> TimeInterval
+    func determineHealthState(percent: Double) -> HealthState
+}
+
+enum HealthState {
+    case healthy // 0-70%
+    case warning // 70-90%  
+    case critical // 90-100%
+    
+    var color: NSColor { ... }
+    var symbolName: String { ... }
+}
+```
+
+## Phase 2: UI Foundation (Days 3-5)
+
+### Milestone 2.1: Menu Bar Integration
+**Acceptance Criteria:**
+- Icon appears in menu bar
+- Updates without flicker
+- Click reveals dropdown
+
+```swift
+// Sources/App/MenuBarController.swift
+@MainActor
+class MenuBarController: NSObject {
+    private let statusItem: NSStatusItem
+    private var popover: NSPopover?
+    private var updateTimer: Timer?
+    
+    func setupStatusItem()
+    func updateIcon(state: HealthState, percent: Int)
+    func showDropdown()
+    func startPolling(interval: TimeInterval)
+}
+
+// Sources/App/QStatusApp.swift
+@main
+struct QStatusApp: App {
+    @StateObject private var appState = AppState()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    
+    var body: some Scene {
+        Settings {
+            EmptyView()
+        }
+    }
+}
+```
+
+### Milestone 2.2: Dropdown View
+**Acceptance Criteria:**
+- Shows all required metrics
+- Real-time updates
+- Native macOS styling
+
+```swift
+// Sources/App/DropdownView.swift
+struct DropdownView: View {
+    @ObservedObject var viewModel: UsageViewModel
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HeaderSection(usage: viewModel.currentUsage)
+            Divider()
+            MetricsGrid(metrics: viewModel.metrics)
+            UsageChart(history: viewModel.history)
+            FooterActions()
+        }
+        .frame(width: 280)
+        .padding()
+    }
+}
+
+// Sources/UI/Components/UsageChart.swift
+struct UsageChart: View {
+    let history: [UsageSnapshot]
+    
+    var body: some View {
+        Chart(history) { snapshot in
+            LineMark(
+                x: .value("Time", snapshot.timestamp),
+                y: .value("Tokens", snapshot.tokensUsed)
+            )
+        }
+        .frame(height: 60)
+    }
+}
+```
+
+## Phase 3: Notifications & Settings (Days 5-7)
+
+### Milestone 3.1: Notification System
+**Acceptance Criteria:**
+- Requests permission appropriately
+- Fires at configured thresholds
+- Respects user preferences
+
+```swift
+// Sources/Core/Notifier.swift
+class Notifier: NSObject, UNUserNotificationCenterDelegate {
+    private var lastNotifiedThreshold: Int = 0
+    
+    func requestAuthorization() async throws
+    func scheduleThresholdNotification(percent: Int, threshold: Threshold)
+    func clearPendingNotifications()
+}
+
+enum Threshold: Int, CaseIterable {
+    case seventy = 70
+    case ninety = 90
+    case ninetyfive = 95
+}
+```
+
+### Milestone 3.2: Preferences Window
+**Acceptance Criteria:**
+- All settings persistable
+- Live preview of changes
+- Launch at login toggle
+
+```swift
+// Sources/App/Preferences/PreferencesWindow.swift
+struct PreferencesWindow: View {
+    @StateObject private var settings = SettingsStore()
+    
+    var body: some View {
+        TabView {
+            GeneralTab(settings: settings)
+                .tabItem { Label("General", systemImage: "gear") }
+            NotificationsTab(settings: settings)
+                .tabItem { Label("Notifications", systemImage: "bell") }
+            AppearanceTab(settings: settings)
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+        }
+        .frame(width: 500, height: 400)
+    }
+}
+
+// Sources/Core/Settings.swift
+class SettingsStore: ObservableObject {
+    @AppStorage("updateInterval") var updateInterval = 3.0
+    @AppStorage("showPercentBadge") var showPercentBadge = true
+    
+    func loadFromConfig() throws // YAML/TOML from ~/.config/q-status/
+    func applyEnvironmentOverrides()
+}
+```
+
+## Phase 4: Polish & Distribution (Days 7-10)
+
+### Milestone 4.1: Performance Optimization
+**Acceptance Criteria:**
+- Memory < 50MB
+- CPU < 1% idle
+- Smooth 60fps animations
+
+**Optimization Tactics:**
+```swift
+// Debounced updates
+class UpdateCoordinator {
+    private let updateSubject = PassthroughSubject<UsageSnapshot, Never>()
+    
+    init() {
+        updateSubject
+            .throttle(for: .milliseconds(250), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] in self?.applyUpdate($0) }
+    }
+}
+
+// Efficient diffing
+extension UsageSnapshot: Equatable {
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        abs(lhs.tokensUsed - rhs.tokensUsed) > 10 // Only update on significant change
+    }
+}
+```
+
+### Milestone 4.2: Release Engineering
+**Build Script (Scripts/build-release.sh):**
+```bash
+#!/bin/bash
+xcodebuild archive -scheme QStatusMenubar -archivePath build/QStatus.xcarchive
+xcodebuild -exportArchive -archivePath build/QStatus.xcarchive -exportPath build/
+codesign --deep --force --verify --verbose --sign "Developer ID" build/QStatusMenubar.app
+xcrun notarytool submit build/QStatusMenubar.dmg --apple-id $APPLE_ID --wait
+```
+
+**Homebrew Cask (Formula/q-status-menubar.rb):**
+```ruby
+cask "q-status-menubar" do
+  version "1.0.0"
+  sha256 "..."
+  url "https://github.com/user/q-status/releases/download/v#{version}/QStatusMenubar.dmg"
+  
+  app "QStatusMenubar.app"
+  
+  zap trash: [
+    "~/Library/Preferences/com.qstatus.menubar.plist",
+    "~/.config/q-status/"
+  ]
+end
+```
+
+## Testing Strategy
+
+### Unit Tests
+```swift
+// Tests/CoreTests/MetricsCalculatorTests.swift
+func testUsagePercentCalculation() async {
+    let calc = MetricsCalculator()
+    XCTAssertEqual(calc.calculateUsagePercent(current: 2000, limit: 4000), 50.0)
+}
+
+func testRateCalculation() async {
+    let snapshots = [/* mock data */]
+    XCTAssertEqual(calc.calculateRate(snapshots), 120.0, accuracy: 0.1)
+}
+```
+
+### Integration Tests
+```swift
+// Tests/IntegrationTests/DBReaderTests.swift
+func testReadFromSampleDB() async throws {
+    let reader = QDBReader(path: "Tests/Fixtures/sample.db")
+    let usage = try await reader.fetchLatestUsage()
+    XCTAssertNotNil(usage)
+}
+```
+
+## Risk Mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| DB schema changes | Abstract queries; version detection; graceful degradation |
+| Lock contention | Read-only mode; WAL handling; exponential backoff |
+| Memory leaks | Weak references; @StateObject lifecycle; Instruments profiling |
+| Notification spam | Rate limiting; smart coalescing; user controls |
+| Launch performance | Lazy loading; async startup; minimal initial work |
+
+## Day-by-Day Schedule
+
+**Days 1-2:** Project setup, DB reader, metrics calculator
+**Day 3:** Menu bar controller, basic icon updates
+**Day 4:** Dropdown view, real-time updates
+**Day 5:** Notifications, thresholds
+**Day 6:** Preferences window, settings persistence
+**Day 7:** Polish, animations, edge cases
+**Day 8:** Performance profiling, optimizations
+**Day 9:** Build automation, DMG creation
+**Day 10:** Testing, documentation, release
+
+## Success Metrics
+- ✅ Reads Q database without interference
+- ✅ Updates within 250ms of changes
+- ✅ Memory usage stays under 50MB
+- ✅ Zero crashes in 24-hour test run
+- ✅ Notifications fire exactly at thresholds
+- ✅ Preferences persist across launches
+- ✅ DMG installs and runs on macOS 14+
+
+## Next Steps
+1. Initialize Xcode project with structure above
+2. Add SPM dependencies (SQLite.swift or GRDB)
+3. Implement QDBReader with sample queries
+4. Create minimal menu bar app skeleton
+5. Begin iterative development per milestones
+
+This plan provides a complete, actionable roadmap for building Q-Status Menubar in 1-2 weeks with clear deliverables, technical specifications, and risk mitigation strategies.

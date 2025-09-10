@@ -75,6 +75,7 @@ htmlcov/
 *.dylib
 *.dll
 *.exe
+.build/
 
 # Documentation
 docs/_build/

@@ -1,0 +1,476 @@
+[2025-09-09T11:27:57] Code v0.2.105
+--------
+workdir: /Users/stevengonsalvez/d/git/qlips-menubar
+model: gpt-5
+provider: openai
+approval: never
+sandbox: danger-full-access
+reasoning effort: medium
+reasoning summaries: auto
+--------
+[2025-09-09T11:27:57] User instructions:
+Context: Workspace root contains: q-status-requirements.md (full spec), scripts/ (automation helpers), templates/ (docs templates). We are starting fresh with Approach A only (menu bar). Environment: macOS 14+, Xcode 15+, Swift 5.9+. Target users: developers running Amazon Q CLI locally. DB path: ~/.aws/q/db/q.db. Non-invasive: do not modify DB; handle WAL/locks; app should be resource-light. Deliverables: a stepwise plan with milestones, file/module map, and acceptance criteria.
+
+Agent: You are one of three planning agents working in parallel to produce a comprehensive, high‑quality implementation plan for a macOS menu bar application named “Q‑Status Menubar”. This app provides real‑time visibility into Amazon Q CLI (command `q`) token usage by reading Q’s local SQLite database in a non‑invasive, read‑only way.
+
+Context and requirements
+- Focus area: Approach A (macOS Menu Bar Application) from q-status-requirements.md.
+- Target DB: ~/.aws/q/db/q.db (read‑only). Poll every 2–5s (configurable). Track conversations, messages, token usage, timestamps.
+- Menu bar display: Compact percentage + color coding (Green 0–70%, Yellow 70–90%, Red 90–100%). On click: dropdown with details.
+- Dropdown details: current session tokens used, tokens remaining, estimated cost, time until limit, usage rate (tokens/min), historical usage graph.
+- Notifications: macOS notifications at thresholds (70%, 90%, 95%), optional sound, Notification Center integration.
+- UI: Monochrome icon, optional badge with percentage, animation during active sessions, native macOS styling, real‑time updates without flicker, keyboard shortcuts.
+- Preferences window: update interval, thresholds, color scheme, auto‑start at login.
+- Performance: memory <50MB; CPU <1% idle, <5% during updates; battery friendly; smooth UI.
+- Shared: configuration in YAML/TOML under ~/.config/q-status/ with env overrides; graceful handling of DB locks and Q-not-running scenarios; schema changes; read‑only access; do not store message content; optional encrypted config; distribution via DMG and Homebrew cask.
+- Development phases: Prototype → MVP → Enhancement → Polish. Success criteria: non‑invasive, accurate, performant, reliable, user‑friendly, maintainable.
+
+Repository status (today)
+- This repo is at project bootstrap stage. Key files: q-status-requirements.md, scripts/ (automation helpers), templates/ (plan/spec templates). No app source yet. The menubar app will live under a new folder, e.g., `q-status-menubar/`.
+
+Proposed high-level directory structure (Swift primary)
+q-status-menubar/
+- QStatusMenubar.xcodeproj
+- Package.swift (for SPM-managed deps)
+- Sources/
+  - App/
+    - QStatusApp.swift (app entry)
+    - MenuBarController.swift
+    - DropdownView.swift (SwiftUI)
+    - Preferences/
+      - PreferencesWindow.swift
+      - PreferencesViewModel.swift
+  - Core/
+    - QDBReader.swift (SQLite read-only)
+    - MetricsCalculator.swift (usage %, tokens/min, time remaining)
+    - Settings.swift (YAML/TOML + env)
+    - Notifier.swift (UserNotifications)
+    - IconBadgeRenderer.swift
+    - HistoryStore.swift (aggregations for graphs – in-memory or lightweight local)
+  - UI/
+    - Components/ (progress ring/bar, status chip)
+    - Theme/
+      - Colors.swift
+      - Styles.swift
+  - Analytics/
+    - CostEstimator.swift
+    - TrendAnalyzer.swift
+  - Integrations/
+    - LaunchAtLoginHelper (SMAppService)
+- Tests/
+  - CoreTests/
+  - UITests/
+- Resources/
+  - Assets.xcassets (menubar icon variants)
+  - AppIcon.appiconset
+- Scripts/ (build+lint, codegen for cask)
+- Docs/
+
+Technical choices
+- Language: Swift 5.9+, SwiftUI + AppKit interop for status bar.
+- DB: Use SQLite.swift or GRDB as a thin read‑only layer; ensure shared cache + WAL handling; optionally attach `immutable=1` when safe to avoid locks.
+- State: `@MainActor` view models; a background read loop with Combine or async/await Task that polls; diffing to avoid unnecessary UI work.
+- Charts: Swift Charts for historical sparkline in dropdown (or custom path if macOS target requires 13+).
+- Notifications: UserNotifications framework; request authorization on first threshold config.
+- Preferences: Settings bundled + user config under ~/.config/q-status/; map to @AppStorage/UserDefaults with synchronization.
+- Packaging: App bundle + notarized DMG; create Homebrew cask tap.
+
+What to produce
+Create a pragmatic, end‑to‑end execution plan optimized for a small team (1–2 engineers) over 1–2 weeks that:
+1) Breaks work into phases and milestones with acceptance criteria.
+2) Specifies modules, key types, and critical functions (e.g., `QDBReader.fetchLatestUsage()`, `MetricsCalculator.usagePercent(limit:)`, `MenuBarController.updateIcon(state:)`).
+3) Details DB access strategy: schema discovery queries, key SELECTs, polling cadence, lock handling, and a simple schema abstraction to accommodate changes.
+4) Outlines UI flows and states: idle/no-q, connecting, active session, thresholds crossed.
+5) Defines settings schema and precedence (defaults → file → env → runtime overrides) and how to validate.
+6) Adds performance and reliability tactics: CPU/IO budget, debounce/coalesce updates, error/backoff, watchdog for DB staleness.
+7) Covers notifications + user consent UX.
+8) Provides testing strategy: unit (metrics), integration (DB reads against sample fixture DB), UI snapshot tests, and sanity perf checks.
+9) Includes release engineering (codesign/notarize, DMG, cask metadata), versioning, and basic telemetry (optional, privacy‑preserving; can be off by default).
+10) Risks + mitigations and a succinct day‑by‑day schedule.
+
+You may propose sensible alternatives (e.g., GRDB vs SQLite.swift; Swift Charts vs custom sparklines). Favor native Swift/SwiftUI. Keep answers concise but complete and highly actionable. Provide file‑level scaffolds and example signatures where helpful.
+
+Files to consider: q-status-requirements.md, scripts, templates
+
+[Running in read-only mode - no modifications allowed]
+
+[2025-09-09T11:28:22] thinking
+
+**Evaluating database queries**
+
+I’ll start by querying the data version and comparing it to previous versions. If it hasn’t changed, I’ll skip heavy queries. For schema discovery, I need to query sqlite_master for tables related to conversations. I’ll also consider the current Q schema. Then, I’ll propose a generic mapping for tables: conversations, messages, and usage. We need to define minimal fields like conversation_id and token counts. However, I won’t assume too much; I’ll include dynamic column checks. I’ll focus on selecting the last N messages, summing tokens, and determining monthly token limits.
+**Assessing usage quotas**
+
+I suspect the Q CLI might have usage quotas, so I plan to compute the percentage of allowed monthly tokens. To get the limit, I’ll check the config or environment variables. I want to let the user set a daily or monthly token budget in the settings and compute percentages against that. I can also approximate token usage per conversation. If "rate limit tokens" aren't available, I’ll rely on the configured limit. Lastly, I’ll choose TOML for Swift's parser and consider libraries like "TOMLKit" for further integration.
+**Deciding on configuration options**
+
+It appears there's no official swift-toml, but I could use Yams since YAML is more common. Alternatively, I might consider creating a simple INI format. Since the requirements mention YAML or TOML, I’m leaning towards TOML for its simplicity and readability. I’ll ensure to provide a mapping with environment overrides. I need to implement features like auto-start at login and an in-memory history store while being non-invasive by saving a small config file. For performance, I’ll use optimization techniques, adaptively reduce polling when idle, and create a testing strategy with a fixture SQLite DB.
+**Planning telemetry and requirements**
+
+I’m considering making telemetry optional and off by default. If enabled, it’ll send anonymized counters, but I want to postpone and prioritize user privacy. There are risks to consider, like schema changes and potential issues with DB permissions, Apple notarization delays, and CPU load. I’ll create a day-by-day schedule, covering a 10-day plan with module-level scaffolds and signatures. We should also define acceptance criteria for each milestone, keeping the document both concise and complete while including a file/module map. I’ll open q-status-requirements.md to align on definitions for Approach A and review relevant sections quickly.
+**Scanning requirements for Approach A**
+
+I’m going to scan the requirements file to confirm the details for Approach A. To do this, I’ll use the shell tool available in my current environment. It seems the shell isn't namespaced under functions, so I'll access it through functions.shell. I need to make sure to include a preamble line as per the guidelines. This will help in setting the context for what I’m doing while keeping things clear!
+[2025-09-09T11:28:45] codex
+**Assessing usage quotas**
+
+I suspect the Q CLI might have usage quotas, so I plan to compute the percentage of allowed monthly tokens. To get the limit, I’ll check the config or environment variables. I want to let the user set a daily or monthly token budget in the settings and compute percentages against that. I can also approximate token usage per conversation. If "rate limit tokens" aren't available, I’ll rely on the configured limit. Lastly, I’ll choose TOML for Swift's parser and consider libraries like "TOMLKit" for further integration.
+[2025-09-09T11:28:45] codex
+**Deciding on configuration options**
+
+It appears there's no official swift-toml, but I could use Yams since YAML is more common. Alternatively, I might consider creating a simple INI format. Since the requirements mention YAML or TOML, I’m leaning towards TOML for its simplicity and readability. I’ll ensure to provide a mapping with environment overrides. I need to implement features like auto-start at login and an in-memory history store while being non-invasive by saving a small config file. For performance, I’ll use optimization techniques, adaptively reduce polling when idle, and create a testing strategy with a fixture SQLite DB.
+[2025-09-09T11:28:45] codex
+**Planning telemetry and requirements**
+
+I’m considering making telemetry optional and off by default. If enabled, it’ll send anonymized counters, but I want to postpone and prioritize user privacy. There are risks to consider, like schema changes and potential issues with DB permissions, Apple notarization delays, and CPU load. I’ll create a day-by-day schedule, covering a 10-day plan with module-level scaffolds and signatures. We should also define acceptance criteria for each milestone, keeping the document both concise and complete while including a file/module map. I’ll open q-status-requirements.md to align on definitions for Approach A and review relevant sections quickly.
+[2025-09-09T11:28:45] codex
+**Scanning requirements for Approach A**
+
+I’m going to scan the requirements file to confirm the details for Approach A. To do this, I’ll use the shell tool available in my current environment. It seems the shell isn't namespaced under functions, so I'll access it through functions.shell. I need to make sure to include a preamble line as per the guidelines. This will help in setting the context for what I’m doing while keeping things clear!
+[2025-09-09T11:28:45] codex
+
+Scanning the requirements and templates to align the plan.
+[2025-09-09T11:28:45] exec bash -lc 'ls -la' in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T11:28:46] bash -lc 'ls -la' succeeded in 317ms:
+total 40
+drwxr-xr-x@  10 stevengonsalvez  staff   320  9 Sep 12:28 .
+drwxr-xr-x  106 stevengonsalvez  staff  3392  9 Sep 11:27 ..
+drwxr-xr-x@   3 stevengonsalvez  staff    96  9 Sep 11:27 .claude
+-rw-r--r--@   1 stevengonsalvez  staff    72  9 Sep 11:27 .git
+-rw-r--r--@   1 stevengonsalvez  staff  1034  9 Sep 11:27 .gitignore
+drwxr-xr-x@   4 stevengonsalvez  staff   128  9 Sep 12:28 logs
+drwxr-xr-x@   4 stevengonsalvez  staff   128  9 Sep 11:27 memory
+-rw-r--r--@   1 stevengonsalvez  staff  8492  9 Sep 11:27 q-status-requirements.md
+drwxr-xr-x@   8 stevengonsalvez  staff   256  9 Sep 11:27 scripts
+drwxr-xr-x@   6 stevengonsalvez  staff   192  9 Sep 11:27 templates
+[2025-09-09T11:28:46] tokens used: 10358
+[2025-09-09T11:28:49] exec bash -lc 'rg -n "Approach A|Menu Bar|menubar|SQLite|DB|schema|notifications|threshold" q-status-requirements.md || true' in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T11:28:49] bash -lc 'rg -n "Approach A|Menu Bar|menubar|SQLite|DB|schema|notifications|threshold" q-status-requirements.md || true' succeeded in 126ms:
+
+[2025-09-09T11:28:49] tokens used: 558
+[2025-09-09T11:28:53] exec bash -lc 'grep -nE "Approach A|Menu Bar|menubar|SQLite|DB|schema|notifications|threshold|poll" q-status-requirements.md || true' in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T11:28:53] bash -lc 'grep -nE "Approach A|Menu Bar|menubar|SQLite|DB|schema|notifications|threshold|poll" q-status-requirements.md || true' succeeded in 145ms:
+21:### Approach A: macOS Menu Bar Application
+23:A native macOS menu bar application that monitors Q's SQLite database and displays real-time metrics.
+31:## Approach A: macOS Menu Bar Application
+40:   - Monitor Q's SQLite database at: `~/.aws/q/db/q.db`
+44:2. **Menu Bar Display**
+59:   - macOS native notifications at thresholds (70%, 90%, 95%)
+68:- **Libraries**: SQLite.swift, Charts
+82:1. **Menu Bar Icon**
+94:   - Notification thresholds
+115:   - Direct SQLite connection to Q's database
+116:   - Real-time change detection via polling or file watching
+198:Both approaches need to understand Q's SQLite schema:
+214:- Database schema changes
+224:- **Menu Bar**: DMG installer, Homebrew cask
+267:q-status-menubar/
+[2025-09-09T11:28:53] tokens used: 275
+[2025-09-09T11:28:54] exec bash -lc "sed -n '1,160p' q-status-requirements.md" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T11:28:55] bash -lc "sed -n '1,160p' q-status-requirements.md" succeeded in 164ms:
+# Q-Status Requirements - Dual Approach
+
+## Executive Summary
+
+After discovering that PTY wrappers are fundamentally incompatible with Q's terminal REPL, we're pivoting to two independent monitoring solutions that observe Q's behavior without interfering with its operation.
+
+## Problem Statement
+
+Amazon Q CLI (q) consumes tokens during usage but provides no real-time visibility into:
+- Current token usage within a session
+- Approaching token limits
+- Cost accumulation
+- Usage patterns and trends
+
+Users need visibility without interference with Q's terminal operations.
+
+## Solution Architecture
+
+Two independent, non-invasive monitoring approaches:
+
+[2025-09-09T11:28:55] tokens used: 416
+[2025-09-09T11:28:57] exec bash -lc "sed -n '160,360p' q-status-requirements.md" in /Users/stevengonsalvez/d/git/qlips-menubar
+[2025-09-09T11:28:57] bash -lc "sed -n '160,360p' q-status-requirements.md" succeeded in 201ms:
+   │ Tokens: 33,000 / 44,000                    │
+   │ Rate: 250 tokens/min                       │
+   │ Est. Time Remaining: 44 minutes            │
+   ├─────────────────────────────────────────────┤
+   │ Cost Analysis                               │
+   │ Session: $0.42 | Today: $2.31 | Month: $48 │
+   ├─────────────────────────────────────────────┤
+   │ Usage Graph (Last Hour)                    │
+   │ ▁▂▃▄▅▆▇█▇▆▅▄▃▂▁                           │
+   ├─────────────────────────────────────────────┤
+   │ [R]efresh [S]ettings [H]istory [Q]uit      │
+   └─────────────────────────────────────────────┘
+   ```
+
+2. **Color Coding**
+   - Green: Safe usage (0-70%)
+   - Yellow: Warning zone (70-90%)
+   - Red: Critical (90-100%)
+   - Blue: Informational elements
+   - White: Standard text
+[2025-09-09T11:28:57] tokens used: 1399
+[2025-09-09T11:29:11] codex
+
+**Summary**
+
+- Scope: Approach A only — native macOS menu bar app reflecting Amazon Q CLI token usage in real time from `~/.aws/q/db/q.db`.
+- Strategy: GRDB-based read-only access with WAL-safe reads, 2–5s adaptive polling with `PRAGMA data_version` to coalesce work, SwiftUI + AppKit status item, native notifications, YAML/TOML config with env overrides, tight CPU/memory budget.
+
+**Phases & Milestones**
+
+- Prototype (Day 1–2)
+  - DB open read-only; query core metrics; basic console logs.
+  - Menu bar icon showing usage percentage; manual refresh button.
+  - Acceptance: App opens, polls every N seconds, updates percentage without blocking UI.
+- MVP (Day 3–5)
+  - Dropdown details (session tokens, remaining, estimated cost, time to limit, tokens/min).
+  - Notifications at thresholds; Preferences window (interval, thresholds, color scheme).
+  - Acceptance: Accurate updates within 2–3s of DB changes; notifications fire at 70/90/95%; settings persist and override defaults.
+- Enhancement (Day 6–7)
+  - Historical sparkline (Swift Charts or custom path); launch at login; keyboard shortcuts.
+  - Idle/connecting/active session states; animation during active session.
+  - Acceptance: Smooth dropdown, sparkline shows last 60 min; launch at login toggles; low CPU at idle.
+- Polish (Day 8–10)
+  - Performance tuning, error/backoff/lock handling, graceful “Q not running”.
+  - Release engineering (codesign, notarize, DMG, Homebrew cask); docs.
+  - Acceptance: CPU <1% idle/<5% during updates; memory <50MB; notarized DMG installs; cask formula installs and runs.
+
+**Directory & Module Map**
+
+- `q-status-menubar/`
+  - `QStatusMenubar.xcodeproj`
+  - `Package.swift`
+  - `Sources/`
+    - `App/`
+      - `QStatusApp.swift`: app entry (SwiftUI `@main`)
+      - `MenuBarController.swift`: NSStatusItem, menu/dock coordination
+      - `DropdownView.swift`: SwiftUI dropdown
+      - `Preferences/`
+        - `PreferencesWindow.swift`
+        - `PreferencesViewModel.swift`
+    - `Core/`
+      - `QDBReader.swift`: read-only GRDB access, schema adapter
+      - `MetricsCalculator.swift`: usage %, tokens/min, time remaining
+      - `Settings.swift`: config load/merge/validate (YAML/TOML + env)
+      - `Notifier.swift`: UNUserNotificationCenter wrapper
+      - `IconBadgeRenderer.swift`: dynamic menubar badge/icon
+      - `HistoryStore.swift`: rolling aggregates for sparkline (in-memory + small local cache)
+    - `UI/`
+      - `Components/` (progress ring/bar, status chip)
+      - `Theme/Colors.swift`, `Theme/Styles.swift`
+    - `Analytics/`
+      - `CostEstimator.swift`, `TrendAnalyzer.swift`
+    - `Integrations/`
+      - `LaunchAtLoginHelper.swift` (SMAppService)
+  - `Tests/`
+    - `CoreTests/` (metrics, settings, cost estimator)
+    - `IntegrationTests/` (DB reads against fixture `q.db`/`q.db-wal`)
+    - `UITests/` (snapshot)
+  - `Resources/`
+    - `Assets.xcassets`, `AppIcon.appiconset`
+  - `Scripts/` (build, sign/notarize, DMG, cask)
+  - `Docs/` (quickstart, config, troubleshooting)
+
+**Key Types & Function Signatures**
+
+- `QDBReader`
+  - `init(dbURL: URL, config: QDBConfig)`
+  - `func open() throws`
+  - `func dataVersion() throws -> Int`
+  - `func fetchLatestUsage(window: TimeInterval?) throws -> DBUsageSnapshot`
+  - `func fetchCurrentSession() throws -> Session?`
+  - `func fetchBuckets(since: Date, interval: TimeInterval) throws -> [UsageBucket]`
+  - Notes: Internally uses GRDB `DatabasePool` with `readonly: true`, `busyMode: .immediate`, `foreignKeysEnabled: false`.
+- `MetricsCalculator`
+  - `func usagePercent(used: Int, limit: Int) -> Double`
+  - `func tokensPerMinute(buckets: [UsageBucket]) -> Double`
+  - `func timeToLimit(remaining: Int, ratePerMin: Double) -> TimeInterval?`
+- `MenuBarController`
+  - `func startPolling()`
+  - `func updateIcon(state: UsageState)`
+  - `func updateMenu(with vm: UsageDetailViewModel)`
+- `Settings`
+  - `struct AppSettings { ... }`
+  - `static func load() throws -> AppSettings` (defaults → file → env)
+  - `func validate() throws`
+  - `func save()` (optional; user-changed preferences)
+- `Notifier`
+  - `func requestAuthorizationIfNeeded()`
+  - `func notifyThreshold(_ level: ThresholdLevel, usage: UsageSnapshot)`
+  - `func notifyStateChange(_ state: AppState)`
+- `IconBadgeRenderer`
+  - `func render(percentage: Int, color: NSColor) -> NSImage`
+- `HistoryStore`
+  - `func append(snapshot: DBUsageSnapshot)`
+  - `func buckets(period: TimeInterval, window: DateInterval) -> [UsageBucket]`
+- `CostEstimator`
+  - `func estimate(tokens: Int, model: String) -> Decimal`
+- `TrendAnalyzer`
+  - `func trend(for buckets: [UsageBucket]) -> Trend`
+- `LaunchAtLoginHelper`
+  - `func setEnabled(_ enabled: Bool)`
+
+**DB Access Strategy**
+
+- Library: Prefer GRDB for robust WAL-safe, read-only performance and snapshots. Alternative: SQLite.swift with `sqlite3_open_v2` flags (`SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_PRIVATECACHE`).
+- Open URI: `file:/Users/.../.aws/q/db/q.db?mode=ro&cache=shared` (no `immutable=1` for live DB).
+- Pragmas on connection:
+  - `PRAGMA busy_timeout = 0;` (fail fast; readers don’t block writers in WAL)
+  - `PRAGMA journal_mode = WAL;` (informational; not enforced in read-only)
+  - `PRAGMA synchronous = NORMAL;` (no effect read-only, but safe default)
+  - `PRAGMA temp_store = MEMORY;` (limit IO for temp ops)
+- Change detection:
+  - Cheap probe: `PRAGMA data_version;` — if unchanged since last poll, skip heavy queries.
+  - Optional hint: watch `q.db-wal` via `DispatchSourceFileSystemObject` for vnode events to trigger immediate refresh.
+- Schema discovery:
+  - `SELECT name, sql FROM sqlite_master WHERE type='table';`
+  - Identify tables/columns: conversations, messages, token columns (`input_tokens`, `output_tokens`, `total_tokens`), timestamps (`created_at`, `updated_at`), session keys.
+  - Build adapters that optionally map column aliases to abstract fields; tolerate missing columns.
+- Key SELECTs (examples; adapt to discovered schema):
+  - Current session (most recent active conversation):
+    - `SELECT c.id, c.created_at FROM conversations c ORDER BY c.created_at DESC LIMIT 1;`
+  - Tokens used in current session:
+    - `SELECT SUM(COALESCE(m.input_tokens,0)+COALESCE(m.output_tokens,0)) AS tokens FROM messages m WHERE m.conversation_id = ?;`
+  - Recent usage buckets (sparkline, last 60 min, 1-min buckets):
+    - `SELECT strftime('%Y-%m-%d %H:%M:00', m.created_at) AS minute, SUM(COALESCE(m.input_tokens,0)+COALESCE(m.output_tokens,0)) AS tokens FROM messages m WHERE m.created_at >= ? GROUP BY minute ORDER BY minute;`
+- Polling cadence:
+  - Base interval from settings (default 3s). On no change (`data_version` stable) for N cycles, back off to max interval (5s). On active changes, temporarily reduce to min interval (2s).
+- Lock handling:
+  - Reads in WAL do not block; if busy, fail quickly and schedule retry with jittered backoff (e.g., 250–750ms).
+- Schema abstraction:
+  - `DBFieldMap` resolving available token columns/aliases at startup; cache prepared statements where possible. If schema changes mid-run, refresh mapping on failed column access.
+
+**UI Flows & States**
+
+- States:
+  - `Idle/No-Q`: DB unreachable or data stale; gray icon; dropdown shows guidance.
+  - `Connecting`: Initial open or retry; subtle progress pulse.
+  - `Active Session`: Usage percent with color; animated dot when new activity detected.
+  - `Threshold Crossed`: Badge/notifications as configured.
+- Menu bar compact display:
+  - `XX%` with colored tint per thresholds; optional tiny ring progress.
+- Dropdown:
+  - Header: percentage, tokens used/remaining vs limit.
+  - Metrics: tokens/min, estimated cost, time to limit.
+  - Sparkline: last 60 minutes usage.
+  - Footer: last updated time, “Open Preferences…”, “Pause Monitoring”, “Quit”.
+- Keyboard shortcuts:
+  - Toggle dropdown: custom accelerator (e.g., `⌃⌥Q`).
+  - Pause/resume polling.
+
+**Settings Schema & Precedence**
+
+- Location: `~/.config/q-status/config.toml` (or `.yaml`).
+- Structure (TOML example):
+  - `[polling] interval_seconds = 3`
+  - `[thresholds] warn = 70; high = 90; critical = 95`
+  - `[limits] tokens_per_session = 40000; tokens_per_day = 500000`
+  - `[ui] color_scheme = "auto"; badge = true; animate_active = true`
+  - `[notifications] enabled = true; sound = false`
+  - `[cost] model = "q-default"; rate_per_1k_tokens = 0.0025`
+  - `[startup] launch_at_login = false`
+  - `[privacy] telemetry_enabled = false`
+- Env overrides (examples):
+  - `QSTATUS_POLL_INTERVAL`, `QSTATUS_THRESH_WARN`, `QSTATUS_LIMIT_SESSION`, `QSTATUS_NOTIF_ENABLED`, etc.
+- Precedence: defaults → file → env → runtime (preferences UI) → in-memory (until persisted).
+- Validation:
+  - Ranges (0–100 for thresholds), intervals (1–30s), limits (>0), logical ordering (warn < high < critical).
+  - On invalid, clamp and log user-facing warning in Preferences.
+
+**Performance & Reliability**
+
+- CPU/IO budget:
+  - Use `data_version` gating; skip queries when unchanged.
+  - Pre-compute aggregates with single SQL and calculate rates in Swift.
+  - Limit sparkline computation to bounded windows (60 min).
+- Debounce/coalesce:
+  - Coalesce rapid DB changes into a single UI update per cycle.
+- Backoff & watchdog:
+  - Exponential backoff on DB open failures.
+  - Staleness watchdog: if no DB change in 10 min, show “Idle” and extend poll backoff to 5s.
+- Memory:
+  - Keep history ring buffer (e.g., 360 buckets for 60 min at 10s resolution or 60 buckets at 1 min).
+  - Avoid retaining large query result sets; use streaming or single-pass aggregates.
+- Threading:
+  - `DatabasePool` for reads; `@MainActor` for UI updates; async Tasks with cancellation on app quit or pause.
+
+**Notifications & Consent UX**
+
+- First use of thresholds requires permission prompt; surface unobtrusively in Preferences and on first threshold config.
+- Notify levels: 70/90/95%; rate-limit duplicate alerts (cooldown window).
+- Respect Do Not Disturb; optional sound; Notification Center actions (“Open Q-Status”, “Snooze 1h”).
+
+**Testing Strategy**
+
+- Unit tests
+  - `MetricsCalculatorTests`: percent, rate, time-to-limit edge cases.
+  - `CostEstimatorTests`: pricing matrix, rounding.
+  - `SettingsTests`: precedence, validation, env override parsing.
+- Integration tests
+  - Bundle fixture SQLite DB + WAL; validate `QDBReader` queries and `data_version` checks.
+  - Simulate schema variations (missing `output_tokens`, alternate timestamp formats).
+- UI tests
+  - Snapshot tests for menu bar rendering (various percentages/colors).
+  - Dropdown content states: idle, connecting, active, thresholds.
+- Perf sanity checks
+  - Measure polling loop CPU under synthetic churn; verify coalescing; memory graph under long-run.
+
+**Release Engineering**
+
+- Codesign & notarize
+  - Developer ID Application signing; hardened runtime; entitlements minimal.
+  - Notarize via `xcrun notarytool`; staple ticket.
+- DMG
+  - Create via `create-dmg` or `appdmg`; include drag-to-Applications layout.
+- Homebrew cask
+  - `q-status-menubar.rb` with SHA256, appcast/URL, `zap` stanza for config at `~/.config/q-status`.
+- Versioning
+  - Semantic versioning (start `v0.1.0`); embed build number; changelog in `Docs/CHANGELOG.md`.
+- Telemetry (optional, off by default)
+  - Minimal counters (launch, threshold hits); no PII or message content; toggle in Preferences and config.
+
+**Risks & Mitigations**
+
+- Unknown/Changing DB schema: Discover at runtime; adapter mapping; defensive SQL; feature flags.
+- WAL/locks contention: Read-only + WAL-safe; fast-fail with retry; `data_version` to minimize load.
+- Performance drift: Strict gating and backoff; profiling; keep histories bounded.
+- Notarization delays: Automate early; dry-run notarize in Enhancement phase.
+- User limits unknown: Expose configurable token limits; allow per-session and daily/monthly setting.
+- macOS permissions friction: Lazy-request notifications; clear UI prompts.
+
+**Day-by-Day Schedule (1–2 Engineers)**
+
+- Day 1: Project scaffold (SPM + Xcode), GRDB integration, open DB read-only, `data_version` probe, log aggregates.
+- Day 2: Menu bar item + compact percentage + colors; basic polling loop; `MetricsCalculator`.
+- Day 3: Dropdown view: tokens used/remaining, tokens/min, time to limit, cost; `Settings` load/override; Preferences UI skeleton.
+- Day 4: Notifications + thresholds; consent flow; Icon badge rendering; real-time updates without flicker.
+- Day 5: HistoryStore + sparkline (Swift Charts or fallback path if min OS requires); keyboard shortcut; pause/resume.
+- Day 6: Launch at login; error/backoff/graceful “Q not running”; schema discovery adapter; tests (unit + integration).
+- Day 7: UI snapshots; performance tuning; watchdog; battery checks; finalize Preferences.
+- Day 8: Codesign + notarize pipeline; DMG packaging; Homebrew cask draft; docs.
+- Day 9: Stabilization, fix edge cases; reliability runs; telemetry (behind flag).
+- Day 10: Final QA; release notes; tag `v0.1.0`; publish DMG and cask.
+
+**Acceptance Criteria (Per Milestone)**
+
+- Prototype
+  - Read-only DB access; no writer interference; updates visible in console; menu shows accurate percent.
+- MVP
+  - Dropdown complete; notifications fire correctly; preferences persist and override; CPU/Memory within targets.
+- Enhancement
+  - Sparkline accurate; launch at login works; UI smooth; keyboard shortcuts active.
+- Polish
+  - Robust against DB staleness/locks; installer notarized; Homebrew cask installs; tests pass; resource budgets met.
+
+**Implementation Notes & Alternatives**
+
+- DB library: GRDB preferred; SQLite.swift acceptable if snapshot isolation is handled carefully.
+- Charts: Swift Charts requires macOS 13+; otherwise implement tiny sparkline with `Path`.
+- Config format: TOML recommended for simplicity; YAML supported with Yams if preferred.
+- Adaptive polling: optionally complement polling with `DispatchSource` file events on `q.db-wal` to prompt immediate refreshs.
+
+If you want, I can turn this into a living project scaffold under `q-status-menubar/` with Package.swift, targets, and empty file stubs next.
+[2025-09-09T11:30:09] tokens used: 5262
