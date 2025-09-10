@@ -17,6 +17,11 @@ public final class UpdateCoordinator: @unchecked Sendable {
     // Compaction heuristics
     private var lastSessionMetrics: [String: (tokens: Int, messages: Int, usage: Double)] = [:]
     private var compactingUntil: [String: Date] = [:]
+    // Global EMA rates
+    private var lastGlobalTokens: Int = 0
+    private var lastGlobalRateAt: Date = .distantPast
+    private var emaTokensPerMinute: Double = 0
+    private let emaAlpha: Double = 0.3
 
     public init(reader: QDBReader, metrics: MetricsCalculator, settings: SettingsStore) {
         self.reader = reader
@@ -61,7 +66,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         let snapshot = try await self.reader.fetchLatestUsage()
                         await self.append(snapshot: snapshot)
                         // Also refresh session list (first page)
-                        if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days) {
+                        if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: false) {
                             await self.applySessions(sessions)
                         }
                         // Refresh global totals (aggregated across all sessions)
@@ -87,7 +92,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
             do {
                 let snapshot = try await self.reader.fetchLatestUsage()
                 await self.append(snapshot: snapshot)
-                if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days) {
+                if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: false) {
                     await self.applySessions(sessions)
                 }
                 await self.refreshGlobalTotals()
@@ -163,7 +168,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
             // Compute per-session cost with model-specific override when available
             let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
             let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
-            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: s.contextWindow, usagePercent: s.usagePercent, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
+            // Use 175k base for context usage percent (per Q CLI display)
+            let contextBase = 175_000
+            let usage175 = min(100.0, max(0.0, (Double(s.tokensUsed)/Double(contextBase))*100.0))
+            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: contextBase, usagePercent: usage175, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
         }
         viewModel.sessions = mapped
         // Global totals for header
@@ -174,6 +182,26 @@ public final class UpdateCoordinator: @unchecked Sendable {
         // Per-session cost accumulation
         let pageCost = mapped.reduce(0.0) { $0 + sToCost($1) }
         viewModel.pageCost = CostEstimator.formatUSD(pageCost)
+        // Preload category breakdown for first few rows to render stacked bars
+        Task.detached { [weak self] in
+            guard let self else { return }
+            let firstKeys = mapped.prefix(10).map { $0.id }
+            await withTaskGroup(of: (String, (Int,Int,Int,Int))?.self) { group in
+                for key in firstKeys {
+                    group.addTask { [weak self] in
+                        guard let self else { return nil }
+                        if let details = try? await self.reader.fetchSessionDetail(key: key) {
+                            return (key, (details.historyTokens, details.contextFilesTokens, details.toolsTokens, details.systemTokens))
+                        }
+                        return nil
+                    }
+                }
+                var updatesLocal: [String:(Int,Int,Int,Int)] = [:]
+                for await res in group { if let (k, tuple) = res { updatesLocal[k] = tuple } }
+                let safeUpdates = updatesLocal
+                await MainActor.run { for (k,t) in safeUpdates { self.viewModel.sessionCategoryTokens[k] = (history:t.0, context:t.1, tools:t.2, system:t.3) } }
+            }
+        }
     }
 
     private func sToCost(_ s: SessionSummary) -> Double {
@@ -183,9 +211,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     private func loadAllSessions(page: Int) async {
         do {
-            let count = try await reader.sessionCount()
+            let count = try await reader.sessionCount(activeOnly: false)
             let offset = page * pageSize
-            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset, groupByFolder: self.settings.groupByFolder, activeOnly: self.settings.showActiveLast7Days)
+            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset, groupByFolder: self.settings.groupByFolder, activeOnly: false)
             // compute costs for allSessions
             let costMapped = sessions.map { s -> SessionSummary in
                 let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
@@ -227,18 +255,44 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func refreshGlobalTotals() async {
         do {
             let global = try await reader.fetchGlobalMetrics()
+            let byModel = (try? await reader.fetchGlobalTotalsByModel()) ?? []
+            // Compute precise totals and cost from by-model rows
+            var totalTokens = 0
+            var totalMessages = 0
+            var totalCost = 0.0
+            for row in byModel {
+                totalTokens += row.tokens
+                totalMessages += row.messages
+                let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                totalCost += CostEstimator.estimateUSD(tokens: row.tokens, ratePer1k: rate)
+            }
             await MainActor.run {
-                viewModel.globalTokens = global.totalTokens
+                viewModel.globalTokens = totalTokens
+                viewModel.globalMessages = totalMessages
+                viewModel.globalCost = totalCost
                 viewModel.globalSessions = global.totalSessions
                 viewModel.globalNearLimit = global.sessionsNearLimit
                 viewModel.globalTop = global.topHeavySessions
-                // Snapshot-delta accumulation for Today/Week/Month (approximate)
-                let delta = max(0, global.totalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
-                viewModel._lastGlobalTotalTokens = global.totalTokens
+                // Update EMA burn rate from global total delta
                 let now = Date()
-                if Calendar.current.isDateInToday(viewModel._lastTotalsDate ?? now) == false {
+                if lastGlobalRateAt != .distantPast {
+                    let dt = now.timeIntervalSince(lastGlobalRateAt)
+                    if dt > 0 {
+                        let dTokens = max(0, totalTokens - lastGlobalTokens)
+                        let instPerMin = (Double(dTokens) / dt) * 60.0
+                        emaTokensPerMinute = emaAlpha * instPerMin + (1.0 - emaAlpha) * emaTokensPerMinute
+                        viewModel.globalTokensPerMinute = emaTokensPerMinute
+                    }
+                }
+                lastGlobalRateAt = now
+                lastGlobalTokens = totalTokens
+                // Snapshot-delta accumulation for Today/Week/Month (approximate)
+                let delta = max(0, totalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
+                viewModel._lastGlobalTotalTokens = totalTokens
+                let now2 = Date()
+                if Calendar.current.isDateInToday(viewModel._lastTotalsDate ?? now2) == false {
                     viewModel.tokensToday = 0; viewModel.costToday = 0
-                    viewModel._lastTotalsDate = now
+                    viewModel._lastTotalsDate = now2
                 }
                 viewModel.tokensToday += delta
                 let defaultRate = self.settings.costRatePer1kTokensUSD
@@ -251,27 +305,69 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             // Precise day/week/month tokens+messages per model, then cost via pricing
             if let perModel = try? await reader.fetchPeriodTokensByModel() {
-                var dayTok = 0, weekTok = 0, monthTok = 0
+                var dayTok = 0, weekTok = 0, monthTok = 0, yearTok = 0
                 var dayMsg = 0, weekMsg = 0, monthMsg = 0
-                var dayCost = 0.0, weekCost = 0.0, monthCost = 0.0
+                var dayCost = 0.0, weekCost = 0.0, monthCost = 0.0, yearCost = 0.0
+                var weightedRateNumerator: Double = 0.0
+                var weightedRateDenominator: Int = 0
                 for row in perModel {
                     let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
-                    dayTok += row.dayTokens; weekTok += row.weekTokens; monthTok += row.monthTokens
+                    dayTok += row.dayTokens; weekTok += row.weekTokens; monthTok += row.monthTokens; yearTok += row.yearTokens
                     dayMsg += row.dayMessages; weekMsg += row.weekMessages; monthMsg += row.monthMessages
                     dayCost += CostEstimator.estimateUSD(tokens: row.dayTokens, ratePer1k: rate)
                     weekCost += CostEstimator.estimateUSD(tokens: row.weekTokens, ratePer1k: rate)
                     monthCost += CostEstimator.estimateUSD(tokens: row.monthTokens, ratePer1k: rate)
+                    yearCost += CostEstimator.estimateUSD(tokens: row.yearTokens, ratePer1k: rate)
+                    // Weighted average rate per 1k based on day tokens
+                    weightedRateNumerator += Double(row.dayTokens) * rate
+                    weightedRateDenominator += row.dayTokens
                 }
+                let dTok = dayTok, wTok = weekTok, mTok = monthTok, yTok = yearTok
+                let dC = dayCost, wC = weekCost, mC = monthCost, yC = yearCost, mM = monthMsg
+                let wrNum = weightedRateNumerator, wrDen = weightedRateDenominator
                 await MainActor.run {
-                    viewModel.tokensToday = dayTok
-                    viewModel.tokensWeek = weekTok
-                    viewModel.tokensMonth = monthTok
-                    viewModel.costToday = dayCost
-                    viewModel.costWeek = weekCost
-                    viewModel.costMonth = monthCost
-                    viewModel.messagesMonth = monthMsg
+                    viewModel.tokensToday = dTok
+                    viewModel.tokensWeek = wTok
+                    viewModel.tokensMonth = mTok
+                    viewModel.tokensYear = yTok
+                    viewModel.costToday = dC
+                    viewModel.costWeek = wC
+                    viewModel.costMonth = mC
+                    viewModel.costYear = yC
+                    // We'll override messagesMonth below with history-based count
+                    if wrDen > 0 {
+                        viewModel.weightedRatePer1k = wrNum / Double(wrDen)
+                    } else {
+                        viewModel.weightedRatePer1k = self.settings.costRatePer1kTokensUSD
+                    }
                 }
             }
+            // History-based monthly message count (authoritative locally)
+            if let mCount = try? await reader.fetchMonthlyMessageCount() {
+                await MainActor.run { viewModel.messagesMonth = mCount }
+            }
+            // Enrich Top 5 with precise tokens/cwd using details; cap usage at 100%
+            let enrichedTop = try await withThrowingTaskGroup(of: SessionSummary?.self) { group -> [SessionSummary] in
+                for s in (viewModel.globalTop.prefix(5)) {
+                    group.addTask { [weak self] in
+                        guard let self else { return s }
+                        if let details = try? await self.reader.fetchSessionDetail(key: s.id) {
+                            let ctxBase = 175_000
+                            let tokens = details.summary.tokensUsed
+                            let usage = min(100.0, max(0.0, (Double(tokens)/Double(ctxBase))*100.0))
+                            let cwd = details.summary.cwd
+                            let rate = self.settings.modelPricing[details.summary.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                            let cost = CostEstimator.estimateUSD(tokens: tokens, ratePer1k: rate)
+                            return SessionSummary(id: s.id, cwd: cwd, tokensUsed: tokens, contextWindow: ctxBase, usagePercent: usage, messageCount: details.summary.messageCount, lastActivity: details.summary.lastActivity, state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: s.internalRowID, hasCompactionIndicators: s.hasCompactionIndicators, modelId: details.summary.modelId, costUSD: cost)
+                        }
+                        return s
+                    }
+                }
+                var out: [SessionSummary] = []
+                for try await item in group { if let i = item { out.append(i) } }
+                return out
+            }
+            await MainActor.run { viewModel.globalTop = enrichedTop }
         } catch { /* ignore */ }
     }
 }
@@ -296,14 +392,21 @@ public final class UsageViewModel: ObservableObject {
     @Published public var globalSessions: Int = 0
     @Published public var globalNearLimit: Int = 0
     @Published public var globalTop: [SessionSummary] = []
+    @Published public var globalMessages: Int = 0
+    @Published public var globalCost: Double = 0
     // Period metrics (approximate via snapshot deltas)
     @Published public var tokensToday: Int = 0
     @Published public var tokensWeek: Int = 0
     @Published public var tokensMonth: Int = 0
+    @Published public var tokensYear: Int = 0
     @Published public var costToday: Double = 0
     @Published public var costWeek: Double = 0
     @Published public var costMonth: Double = 0
+    @Published public var costYear: Double = 0
     @Published public var messagesMonth: Int = 0
+    // Global burn/cost rate
+    @Published public var globalTokensPerMinute: Double = 0
+    @Published public var weightedRatePer1k: Double = 0.0025
     // Internal trackers
     public var _lastGlobalTotalTokens: Int? = nil
     public var _lastTotalsDate: Date? = nil
@@ -329,6 +432,8 @@ public final class UsageViewModel: ObservableObject {
     // Access to settings for UI toggles
     public var settings: SettingsStore? = nil
     public var forceRefresh: (() -> Void)? = nil
+    // Cached per-session category tokens for stacked bars
+    @Published public var sessionCategoryTokens: [String: (history:Int, context:Int, tools:Int, system:Int)] = [:]
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {

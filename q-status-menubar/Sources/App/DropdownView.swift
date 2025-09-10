@@ -7,105 +7,111 @@ import Core
 
 struct DropdownView: View {
     @ObservedObject var viewModel: UsageViewModel
+    @State private var topSort: TopSort = .tokens
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Global header summary
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Q Token Usage").font(.headline)
-                    Text(globalSummaryLine)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("\(viewModel.percent)%")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(viewModel.tintColor)
-            }
-            Divider()
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                GridRow {
-                    Label("Tokens Used", systemImage: "bolt.fill")
+            // Global header with totals
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Overall").font(.headline)
                     Spacer()
-                    Text("\(viewModel.tokensUsed)")
-                }
-                GridRow {
-                    Label("Remaining", systemImage: "gauge.with.dots.needle.bottom.50percent")
-                    Spacer()
-                    Text("\(viewModel.tokensRemaining)")
-                }
-                GridRow {
-                    Label("Rate", systemImage: "speedometer")
-                    Spacer()
-                    Text("\(Int(viewModel.tokensPerMinute)) tpm")
-                }
-                GridRow {
-                    Label("Est. Time Left", systemImage: "clock")
-                    Spacer()
-                    Text(viewModel.timeRemaining)
-                }
-                GridRow {
-                    Label("Est. Cost", systemImage: "dollarsign.circle")
-                    Spacer()
-                    Text(viewModel.estimatedCost)
-                }
-                GridRow {
-                    Label("Page Cost", systemImage: "dollarsign.square")
-                    Spacer()
-                    Text(viewModel.pageCost)
-                }
-                GridRow {
-                    Label("Page Sessions", systemImage: "rectangle.stack")
-                    Spacer()
-                    Text("\(viewModel.totalSessions) • near limit: \(viewModel.sessionsNearLimit)")
-                }
-                GridRow {
-                    Label("Page Tokens", systemImage: "sum")
-                    Spacer()
-                    Text("\(viewModel.totalTokens)")
-                }
-                GridRow {
-                    Label("All Sessions", systemImage: "tray.full")
-                    Spacer()
-                    Text("\(viewModel.globalSessions) • near limit: \(viewModel.globalNearLimit)")
-                }
-                GridRow {
-                    Label("All Tokens", systemImage: "sum")
-                    Spacer()
-                    Text("\(viewModel.globalTokens)")
-                }
-            }
-            .font(.subheadline)
-
-            Divider()
-            if !viewModel.globalTop.isEmpty {
-                Text("Top Sessions (by tokens)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                VStack(spacing: 6) {
-                    ForEach(viewModel.globalTop, id: \.id) { s in
-                        Button(action: { viewModel.onSelectSession?(s) }) {
-                            HStack {
-                                Text(shortId(s.id))
-                                    .font(.system(.caption, design: .monospaced))
-                                Spacer()
-                                Text("\(formatTokens(s.tokensUsed)) • \(Int(s.usagePercent))%")
-                                    .font(.caption2)
-                            }
-                        }
-                        .buttonStyle(.plain)
+                    if let ctx = activeSessionContextPercent() {
+                        Text("\(ctx)%")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundStyle(contextPercentColor(Double(ctx) ?? 0))
+                            .help("Most‑recent session context usage")
                     }
                 }
-                Divider()
+                .font(.caption)
+                
+                // Global totals display
+                if viewModel.globalSessions > 0 {
+                    HStack {
+                        Text("Global: \(viewModel.globalSessions) sessions • \(formatTokens(viewModel.globalTokens)) tokens • \(CostEstimator.formatUSD(viewModel.globalCost))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                }
+                
+                HStack {
+                    Text("Cost: M \(CostEstimator.formatUSD(viewModel.costMonth)) • W \(CostEstimator.formatUSD(viewModel.costWeek)) • Y \(CostEstimator.formatUSD(viewModel.costYear))")
+                    Spacer()
+                    Toggle("Detailed", isOn: Binding(get: { !(viewModel.settings?.compactMode ?? true) }, set: { viewModel.settings?.compactMode = !$0 }))
+                        .toggleStyle(.switch)
+                        .font(.caption)
+                        .help("Show sparkline and footer totals")
+                }
+                .font(.caption)
+                if showDetailed {
+                    HStack {
+                        Text("🔥 Burn Rate: \(Int(viewModel.globalTokensPerMinute)) tokens/min")
+                        Spacer()
+                        Text("💲 Cost Rate: \(CostEstimator.formatUSD(costRatePerMin())) $/min")
+                    }
+                    .font(.caption)
+                }
             }
+            
+            Divider()
+            
+            // Recent Sessions header block with compact bars
+            if !viewModel.sessions.isEmpty {
+                let recentSessions = viewModel.sessions.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }.prefix(3)
+                if !recentSessions.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Recent Sessions")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        VStack(spacing: 4) {
+                            ForEach(Array(recentSessions), id: \.id) { session in
+                                HStack(spacing: 8) {
+                                    Text(cwdTail2(session.cwd ?? session.id))
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .lineLimit(1)
+                                        .frame(width: 120, alignment: .leading)
+                                    
+                                    // Compact progress bar showing context usage
+                                    GeometryReader { geo in
+                                        ZStack(alignment: .leading) {
+                                            RoundedRectangle(cornerRadius: 2)
+                                                .fill(Color.gray.opacity(0.2))
+                                            RoundedRectangle(cornerRadius: 2)
+                                                .fill(contextPercentColor(session.usagePercent))
+                                                .frame(width: geo.size.width * min(1.0, session.usagePercent / 100.0))
+                                        }
+                                    }
+                                    .frame(height: 4)
+                                    
+                                    Text("\(Int(session.usagePercent))%")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 30, alignment: .trailing)
+                                    
+                                    Text("\(formatTokens(session.tokensUsed))")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 40, alignment: .trailing)
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+                }
+            }
+
+            Divider()
             // Sparkline
-            UsageSparklineCombined(values: viewModel.sparkline)
-                .frame(height: 56)
-                .padding(.top, 4)
+            if showDetailed {
+                UsageSparklineCombined(values: viewModel.sparkline)
+                    .frame(height: 56)
+                    .padding(.top, 4)
+            }
 
             Divider()
             // Footer: Today / Week / Month
+            if showDetailed {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow {
                     Text("Today").font(.caption).foregroundStyle(.secondary)
@@ -120,23 +126,21 @@ struct DropdownView: View {
                 GridRow {
                     Text("Month").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth)) • \(viewModel.messagesMonth) msgs").font(.caption)
+                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth))").font(.caption)
                 }
+            }
             }
             Divider()
             // Sessions list (first page)
             if !viewModel.sessions.isEmpty {
-                HStack {
+                HStack(spacing: 12) {
                     Text("Sessions")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Toggle("Active (7d)", isOn: Binding(get: { viewModel.settings?.showActiveLast7Days ?? false }, set: { viewModel.settings?.showActiveLast7Days = $0 }))
+                    Toggle("Group", isOn: Binding(get: { viewModel.settings?.groupByFolder ?? false }, set: { viewModel.settings?.groupByFolder = $0 }))
                         .toggleStyle(.switch)
-                        .font(.caption)
-                    Toggle("Group by folder", isOn: Binding(get: { viewModel.settings?.groupByFolder ?? false }, set: { viewModel.settings?.groupByFolder = $0 }))
-                        .toggleStyle(.switch)
-                        .font(.caption)
+                        .help("One session per folder")
                     Picker("Sort", selection: $viewModel.sort) {
                         Text("Recent").tag(SessionSort.lastActivity)
                         Text("Usage").tag(SessionSort.usage)
@@ -154,7 +158,7 @@ struct DropdownView: View {
                     VStack(spacing: 8) {
                         ForEach(filteredSortedSessions, id: \.id) { s in
                             Button(action: { viewModel.onSelectSession?(s) }) {
-                                SessionRow(session: s)
+                                SessionRow(session: s, categories: viewModel.sessionCategoryTokens[s.id])
                             }
                             .buttonStyle(.plain)
                         }
@@ -162,8 +166,44 @@ struct DropdownView: View {
                 }
                 .frame(height: 200)
                 HStack {
-                    Button("View All…") { viewModel.onOpenAll?() }
                     Spacer()
+                }
+                Divider()
+            }
+            // Bottom: Top Sessions with sorting and View All
+            if !viewModel.globalTop.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Top Sessions")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Picker("Sort", selection: $topSort) {
+                            Text("Tokens").tag(TopSort.tokens)
+                            Text("Usage").tag(TopSort.usage)
+                            Text("Cost").tag(TopSort.cost)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 200)
+                    }
+                    VStack(spacing: 6) {
+                        ForEach(topSortedGlobalTop().prefix(5), id: \.id) { s in
+                            Button(action: { viewModel.onSelectSession?(s) }) {
+                                HStack {
+                                    Text(cwdTail2(s.cwd ?? s.id))
+                                        .font(.system(.caption, design: .monospaced))
+                                    Spacer()
+                                    Text("\(formatTokens(s.tokensUsed)) • \(Int(s.usagePercent))% • \(CostEstimator.formatUSD(s.costUSD)) • \(s.messageCount) msgs")
+                                        .font(.caption2)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    HStack {
+                        Button("View All…") { viewModel.onOpenAll?() }
+                        Spacer()
+                    }
                 }
                 Divider()
             }
@@ -185,6 +225,8 @@ struct DropdownView: View {
             AllSessionsSheet(viewModel: viewModel)
                 .frame(width: 500, height: 520)
         }
+        // Trigger reloads when filters change
+        .onChange(of: viewModel.settings?.groupByFolder ?? false) { _ in viewModel.forceRefresh?() }
     }
 
     private var summaryLine: String {
@@ -242,6 +284,10 @@ fileprivate func UsageSparklineCombined(values: [Double]) -> some View {
 
 // View helpers
 extension DropdownView {
+    fileprivate func costRatePerMin() -> Double {
+        let ratePer1k = viewModel.weightedRatePer1k
+        return (viewModel.globalTokensPerMinute / 1000.0) * ratePer1k
+    }
     private var filteredSortedSessions: [SessionSummary] {
         var arr = viewModel.sessions
         if !viewModel.searchQuery.isEmpty {
@@ -261,12 +307,40 @@ extension DropdownView {
             return arr.sorted { $0.id < $1.id }
         }
     }
+    fileprivate var showDetailed: Bool { !(viewModel.settings?.compactMode ?? true) }
+    fileprivate func contextPercentColor(_ percent: Double) -> Color {
+        if percent >= 90 { return .red }
+        if percent >= 70 { return .orange }
+        if percent >= 50 { return .yellow }
+        return .green
+    }
+    fileprivate func activeSessionContextPercent() -> String? {
+        guard let s = viewModel.sessions.sorted(by: { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }).first else { return nil }
+        let p = min(100.0, max(0.0, s.usagePercent))
+        if p < 0.1 { return String(format: "%.1f", p) } // show 0.x
+        return String(format: "%.0f", p)
+    }
+    fileprivate func topSortedGlobalTop() -> [SessionSummary] {
+        switch topSort {
+        case .tokens: return viewModel.globalTop.sorted { $0.tokensUsed > $1.tokensUsed }
+        case .usage: return viewModel.globalTop.sorted { $0.usagePercent > $1.usagePercent }
+        case .cost: return viewModel.globalTop.sorted { $0.costUSD > $1.costUSD }
+        }
+    }
     fileprivate func shortId(_ id: String) -> String { id.count > 10 ? String(id.prefix(8)) + "…" : id }
     fileprivate func formatTokens(_ t: Int) -> String { t >= 1000 ? "\(t/1000)k" : "\(t)" }
+    fileprivate func cwdTail2(_ p: String) -> String {
+        let comps = p.split(separator: "/").filter { !$0.isEmpty }
+        if comps.count >= 2 { return comps.suffix(2).joined(separator: "/") }
+        return comps.last.map(String.init) ?? p
+    }
 }
+
+private enum TopSort: String, CaseIterable { case tokens, usage, cost }
 
 struct SessionDetailView: View {
     let details: SessionDetails
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -296,7 +370,7 @@ struct SessionDetailView: View {
                 Button("Copy ID") { copyToClipboard(details.summary.id) }
                 if let cwd = details.summary.cwd { Button("Reveal in Finder") { revealInFinder(cwd) } }
                 Spacer()
-                Button("Close") { /* sheet dismisses on binding set to nil */ }
+                Button("Close") { dismiss() }
             }
         }
     }
@@ -317,11 +391,10 @@ struct SessionDetailView: View {
 
 struct SessionRow: View {
     let session: SessionSummary
+    let categories: (history:Int, context:Int, tools:Int, system:Int)?
     var body: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(shortId(session.id))
-                    .font(.system(.caption, design: .monospaced))
                 if let cwd = session.cwd, !cwd.isEmpty {
                     HStack(spacing: 4) {
                         Image(systemName: "folder")
@@ -340,6 +413,10 @@ struct SessionRow: View {
                 ProgressView(value: min(max(session.usagePercent/100.0, 0), 1))
                     .tint(color(for: session))
                     .frame(width: 120)
+                if let c = categories {
+                    StackedBar(history: c.history, context: c.context, tools: c.tools, system: c.system)
+                        .frame(width: 120, height: 6)
+                }
                 Text("\(formatTokens(session.tokensUsed)) / \(formatTokens(session.contextWindow)) • \(Int(session.usagePercent))% • \(CostEstimator.formatUSD(session.costUSD)) • \(session.messageCount) msgs")
                     .font(.caption2)
             }
@@ -358,6 +435,21 @@ struct SessionRow: View {
     private func color(for s: SessionSummary) -> Color {
         switch s.state { case .critical: return .red; case .warn: return .yellow; default: return .green }
     }
+}
+
+struct StackedBar: View {
+    let history: Int; let context: Int; let tools: Int; let system: Int
+    var body: some View {
+        let total = max(1, history + context + tools + system)
+        HStack(spacing: 0) {
+            Rectangle().fill(Color.mint).frame(width: width(for: history, total: total))
+            Rectangle().fill(Color.cyan).frame(width: width(for: context, total: total))
+            Rectangle().fill(Color.red).frame(width: width(for: tools, total: total))
+            Rectangle().fill(Color.blue).frame(width: width(for: system, total: total))
+        }
+        .cornerRadius(2)
+    }
+    private func width(for part: Int, total: Int) -> CGFloat { CGFloat(part) / CGFloat(total) * 120.0 }
 }
 
 struct AllSessionsSheet: View {
@@ -388,7 +480,7 @@ struct AllSessionsSheet: View {
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(filteredSortedAll, id: \.id) { s in
-                        Button(action: { viewModel.onSelectSession?(s) }) { SessionRow(session: s) }
+                        Button(action: { viewModel.onSelectSession?(s) }) { SessionRow(session: s, categories: viewModel.sessionCategoryTokens[s.id]) }
                             .buttonStyle(.plain)
                     }
                 }

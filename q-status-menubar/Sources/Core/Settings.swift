@@ -26,8 +26,16 @@ public final class SettingsStore: ObservableObject {
 
     // Filters & grouping
     @Published public var groupByFolder: Bool = false
-    @Published public var showActiveLast7Days: Bool = false
     @Published public var refreshIntervalSeconds: Int = 3
+
+    // Menubar icon configuration
+    public enum IconMode: String, CaseIterable { case mostRecent, pinned, frontmostTerminal, monthlyMessages }
+    @Published public var iconMode: IconMode = .mostRecent
+    @Published public var pinnedSessionKey: String? = nil
+    @Published public var showActiveBadge: Bool = true
+
+    // UI density
+    @Published public var compactMode: Bool = true
 
     public init() {
         loadFromDisk()
@@ -58,8 +66,11 @@ public final class SettingsStore: ObservableObject {
                         self.modelPricing = out
                     }
                     if let gb = dict["group_by_folder"] as? Bool { self.groupByFolder = gb }
-                    if let act = dict["show_active_last_7_days"] as? Bool { self.showActiveLast7Days = act }
                     if let ref = dict["refresh_interval_seconds"] as? Int { self.refreshIntervalSeconds = ref }
+                    if let im = dict["icon_mode"] as? String { self.iconMode = IconMode(rawValue: im) ?? .mostRecent }
+                    if let pin = dict["pinned_session_key"] as? String { self.pinnedSessionKey = pin }
+                    if let badge = dict["show_active_badge"] as? Bool { self.showActiveBadge = badge }
+                    if let compact = dict["compact_mode"] as? Bool { self.compactMode = compact }
                 }
             }
         } catch {
@@ -83,8 +94,11 @@ public final class SettingsStore: ObservableObject {
             "cost_model_name": costModelName,
             "model_pricing": modelPricing,
             "group_by_folder": groupByFolder,
-            "show_active_last_7_days": showActiveLast7Days,
-            "refresh_interval_seconds": refreshIntervalSeconds
+            "refresh_interval_seconds": refreshIntervalSeconds,
+            "icon_mode": iconMode.rawValue,
+            "pinned_session_key": pinnedSessionKey as Any,
+            "show_active_badge": showActiveBadge,
+            "compact_mode": compactMode
         ]
         do {
             let yaml = try Yams.dump(object: dict)
@@ -108,8 +122,11 @@ public final class SettingsStore: ObservableObject {
         if let s = env["QSTATUS_COST_RATE_1K"], let v = Double(s) { costRatePer1kTokensUSD = v }
         if let s = env["QSTATUS_COST_MODEL" ] { costModelName = s }
         if let s = env["QSTATUS_GROUP_BY_FOLDER"], let v = Bool(fromString: s) { groupByFolder = v }
-        if let s = env["QSTATUS_ACTIVE_7D"], let v = Bool(fromString: s) { showActiveLast7Days = v }
         if let s = env["QSTATUS_REFRESH_SECS"], let v = Int(s) { refreshIntervalSeconds = v }
+        if let s = env["QSTATUS_ICON_MODE"], let v = IconMode(rawValue: s) { iconMode = v }
+        if let s = env["QSTATUS_PINNED_SESSION"], !s.isEmpty { pinnedSessionKey = s }
+        if let s = env["QSTATUS_BADGE_ACTIVE"], let v = Bool(fromString: s) { showActiveBadge = v }
+        if let s = env["QSTATUS_COMPACT"], let v = Bool(fromString: s) { compactMode = v }
     }
 
     private func configURL() -> URL {
