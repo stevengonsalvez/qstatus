@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::config::AppConfig;
-use crate::data::database::{CompactionStatus, ConversationSummary, GlobalStats};
+use crate::data::database::{CompactionStatus, ConversationSummary, GlobalStats, Session, DirectoryGroup};
 
 // Type alias for usage history
 pub type UsageHistory = Vec<(DateTime<Local>, u64)>;
@@ -39,6 +39,8 @@ pub enum ViewMode {
     CurrentDirectory,  // Show only current directory's conversation
     GlobalOverview,    // Show all conversations summary
     ConversationList,  // List all conversations
+    SessionList,       // List all sessions grouped by directory
+    SessionDetail,     // Detailed view of a specific session
 }
 
 #[derive(Debug)]
@@ -55,6 +57,13 @@ pub struct AppState {
     pub global_stats: Arc<Mutex<Option<GlobalStats>>>,
     pub view_mode: Arc<Mutex<ViewMode>>,
     pub selected_conversation_index: Arc<Mutex<usize>>,
+    // Session-level tracking
+    pub all_sessions: Arc<Mutex<Vec<Session>>>,
+    pub directory_groups: Arc<Mutex<Vec<DirectoryGroup>>>,
+    pub selected_session: Arc<Mutex<Option<Session>>>,
+    pub show_active_only: Arc<Mutex<bool>>,
+    pub last_refresh: Arc<Mutex<DateTime<Local>>>,
+    pub scroll_offset: Arc<Mutex<u16>>,  // For scrolling in lists
 }
 
 impl AppState {
@@ -85,8 +94,14 @@ impl AppState {
             config,
             all_conversations: Arc::new(Mutex::new(Vec::new())),
             global_stats: Arc::new(Mutex::new(None)),
-            view_mode: Arc::new(Mutex::new(ViewMode::GlobalOverview)), // Start with global view
+            view_mode: Arc::new(Mutex::new(ViewMode::SessionList)), // Start with session list view
             selected_conversation_index: Arc::new(Mutex::new(0)),
+            all_sessions: Arc::new(Mutex::new(Vec::new())),
+            directory_groups: Arc::new(Mutex::new(Vec::new())),
+            selected_session: Arc::new(Mutex::new(None)),
+            show_active_only: Arc::new(Mutex::new(true)), // Default to showing only active sessions
+            last_refresh: Arc::new(Mutex::new(Local::now())),
+            scroll_offset: Arc::new(Mutex::new(0)),
         }
     }
 

@@ -85,9 +85,20 @@ impl DataCollector {
         let all_summaries = self.database.get_all_conversation_summaries()?;
         *self.state.all_conversations.lock().unwrap() = all_summaries.clone();
         
+        // Collect session-level data
+        let all_sessions = self.database.get_all_sessions(self.state.config.cost_per_1k_tokens)?;
+        *self.state.all_sessions.lock().unwrap() = all_sessions.clone();
+        
+        // Collect grouped sessions
+        let directory_groups = self.database.get_sessions_grouped_by_directory(self.state.config.cost_per_1k_tokens)?;
+        *self.state.directory_groups.lock().unwrap() = directory_groups.clone();
+        
         // Calculate global stats
         let global_stats = self.database.get_global_stats(self.state.config.cost_per_1k_tokens)?;
         *self.state.global_stats.lock().unwrap() = Some(global_stats.clone());
+        
+        // Update last refresh time
+        *self.state.last_refresh.lock().unwrap() = chrono::Local::now();
         
         // Also get current directory conversation
         let conversation = self.database.get_current_conversation(None)?;
