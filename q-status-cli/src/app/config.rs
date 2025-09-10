@@ -44,7 +44,7 @@ impl Default for AppConfig {
             token_limit: 44000,
             warning_threshold: 70.0,
             critical_threshold: 90.0,
-            cost_per_1k_tokens: 0.01,
+            cost_per_1k_tokens: 0.0066,  // Claude 3.5 Sonnet (Oct 2024) blended rate ~30% output
             history_retention_hours: 24,
             export_format: ExportFormat::Csv,
             theme: Theme::Dark,

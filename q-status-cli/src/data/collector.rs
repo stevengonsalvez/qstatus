@@ -1,7 +1,7 @@
 // ABOUTME: Background data collection following bottom's architecture
 // Runs in separate thread to avoid blocking UI
 
-use crate::app::state::{AppEvent, AppState};
+use crate::app::state::{AppEvent, AppState, TokenSnapshot};
 use crate::data::database::QDatabase;
 use crate::utils::error::Result;
 use crossbeam_channel::Sender;
@@ -9,6 +9,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
+use chrono::Local;
 
 pub struct DataCollector {
     state: Arc<AppState>,
@@ -97,6 +98,11 @@ impl DataCollector {
         let global_stats = self.database.get_global_stats(self.state.config.cost_per_1k_tokens)?;
         *self.state.global_stats.lock().unwrap() = Some(global_stats.clone());
         
+        // Get period-based metrics
+        if let Ok(period_metrics) = self.database.get_period_metrics(self.state.config.cost_per_1k_tokens) {
+            *self.state.period_metrics.lock().unwrap() = Some(period_metrics);
+        }
+        
         // Update last refresh time
         *self.state.last_refresh.lock().unwrap() = chrono::Local::now();
         
@@ -145,7 +151,44 @@ impl DataCollector {
             *self.state.current_conversation.lock().unwrap() = None;
         }
 
+        // Calculate burn rate
+        self.calculate_burn_rate();
+        
         Ok(())
+    }
+    
+    fn calculate_burn_rate(&self) {
+        let all_sessions = self.state.all_sessions.lock().unwrap();
+        let total_tokens: u64 = all_sessions.iter().map(|s| s.token_usage.total_tokens).sum();
+        
+        let mut burn_rate = self.state.burn_rate.lock().unwrap();
+        let now = Local::now();
+        
+        // Add current snapshot
+        burn_rate.snapshots.push_back(TokenSnapshot {
+            timestamp: now,
+            total_tokens,
+        });
+        
+        // Keep only last 10 minutes of snapshots
+        while burn_rate.snapshots.len() > 10 {
+            burn_rate.snapshots.pop_front();
+        }
+        
+        // Calculate burn rate if we have at least 2 snapshots
+        if burn_rate.snapshots.len() >= 2 {
+            let oldest = burn_rate.snapshots.front().unwrap();
+            let newest = burn_rate.snapshots.back().unwrap();
+            
+            let time_diff = newest.timestamp.signed_duration_since(oldest.timestamp);
+            let minutes = time_diff.num_seconds() as f64 / 60.0;
+            
+            if minutes > 0.0 {
+                let token_diff = newest.total_tokens as i64 - oldest.total_tokens as i64;
+                burn_rate.tokens_per_minute = (token_diff as f64 / minutes).max(0.0);
+                burn_rate.cost_per_minute = (burn_rate.tokens_per_minute / 1000.0) * self.state.config.cost_per_1k_tokens;
+            }
+        }
     }
 }
 

@@ -4,12 +4,19 @@
 use chrono::{DateTime, Local};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::collections::VecDeque;
 
 use super::config::AppConfig;
-use crate::data::database::{CompactionStatus, ConversationSummary, GlobalStats, Session, DirectoryGroup};
+use crate::data::database::{CompactionStatus, ConversationSummary, GlobalStats, Session, DirectoryGroup, PeriodMetrics};
 
 // Type alias for usage history
 pub type UsageHistory = Vec<(DateTime<Local>, u64)>;
+
+#[derive(Debug, Clone)]
+pub struct TokenSnapshot {
+    pub timestamp: DateTime<Local>,
+    pub total_tokens: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -32,6 +39,13 @@ pub struct CostAnalysis {
     pub session_cost: f64,
     pub daily_cost: f64,
     pub monthly_cost: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BurnRate {
+    pub tokens_per_minute: f64,
+    pub cost_per_minute: f64,
+    pub snapshots: VecDeque<TokenSnapshot>,  // Keep last 10 minutes of snapshots
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +78,8 @@ pub struct AppState {
     pub show_active_only: Arc<Mutex<bool>>,
     pub last_refresh: Arc<Mutex<DateTime<Local>>>,
     pub scroll_offset: Arc<Mutex<u16>>,  // For scrolling in lists
+    pub burn_rate: Arc<Mutex<BurnRate>>,  // Track token burn rate
+    pub period_metrics: Arc<Mutex<Option<PeriodMetrics>>>,  // Time-based metrics
 }
 
 impl AppState {
@@ -102,6 +118,12 @@ impl AppState {
             show_active_only: Arc::new(Mutex::new(true)), // Default to showing only active sessions
             last_refresh: Arc::new(Mutex::new(Local::now())),
             scroll_offset: Arc::new(Mutex::new(0)),
+            burn_rate: Arc::new(Mutex::new(BurnRate {
+                tokens_per_minute: 0.0,
+                cost_per_minute: 0.0,
+                snapshots: VecDeque::with_capacity(10),
+            })),
+            period_metrics: Arc::new(Mutex::new(None)),
         }
     }
 

@@ -470,8 +470,13 @@ impl Dashboard {
         let header_text = vec![
             Line::from(Span::styled(
                 format!(
-                    "Sessions (Active: {} | Total: {}) - Last refresh: {}",
+                    "Sessions (Active: {} | Showing: {}/{}) - Last refresh: {}",
                     if show_active_only { "ON" } else { "OFF" },
+                    if show_active_only {
+                        directory_groups.iter().map(|g| g.active_session_count).sum::<usize>()
+                    } else {
+                        directory_groups.iter().map(|g| g.sessions.len()).sum::<usize>()
+                    },
                     directory_groups.iter().map(|g| g.sessions.len()).sum::<usize>(),
                     last_refresh.format("%H:%M:%S")
                 ),
@@ -516,11 +521,12 @@ impl Dashboard {
                     
                     let status_icon = if session.is_active { "🟢" } else { "⚫" };
                     let context_icon = if session.has_active_context { "📎" } else { "  " };
-                    let cost_text = format!("${:.2}", session.session_cost);
+                    // Show session cost (current conversation cost)
+                    // Note: Amazon Q stores only one conversation per folder, so cumulative = current
+                    let cost_text = format!("${:.4}", session.session_cost);
                     
                     // Show percentage of context window used (how much room left)
                     let window_pct = session.token_usage.percentage;
-                    let remaining_pct = 100.0 - window_pct;
                     
                     // Add visual indicator for context window usage
                     let usage_indicator = if window_pct > 90.0 {
@@ -706,9 +712,33 @@ impl Dashboard {
     
     fn render_metrics_widget(&self, frame: &mut Frame, area: Rect) {
         let global_stats = self.state.global_stats.lock().unwrap();
+        let burn_rate = self.state.burn_rate.lock().unwrap();
+        let period_metrics = self.state.period_metrics.lock().unwrap();
         
         if let Some(ref stats) = *global_stats {
             let mut text = vec![];
+            
+            // Show cumulative totals (we can't determine time-based metrics without timestamps)
+            if let Some(ref periods) = *period_metrics {
+                text.push(Line::from(vec![
+                    Span::styled("📊 Cumulative Total: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(format!("{} tokens (${:.2})", periods.month_tokens, periods.month_cost)),
+                ]));
+            }
+            
+            // Burn rate and cost rate
+            text.push(Line::from(vec![
+                Span::raw("🔥 Burn Rate: "),
+                Span::styled(
+                    format!("{:.1} tokens/min", burn_rate.tokens_per_minute),
+                    Style::default().fg(Color::Red),
+                ),
+                Span::raw("  💲 Cost Rate: "),
+                Span::styled(
+                    format!("${:.4}/min", burn_rate.cost_per_minute),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
             
             // Message quota
             text.push(Line::from(Span::styled(
@@ -724,7 +754,7 @@ impl Dashboard {
             // Calculate overall context usage
             let active_sessions = self.state.all_sessions.lock().unwrap();
             let total_context: u64 = active_sessions.iter().map(|s| s.token_usage.context_tokens).sum();
-            let total_history: u64 = active_sessions.iter().map(|s| s.token_usage.history_tokens).sum();
+            let _total_history: u64 = active_sessions.iter().map(|s| s.token_usage.history_tokens).sum();
             let context_percentage = if stats.total_tokens > 0 {
                 (total_context as f64 / stats.total_tokens as f64) * 100.0
             } else {
