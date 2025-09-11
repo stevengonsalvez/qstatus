@@ -237,8 +237,8 @@ async fn run_status_check(state: Arc<AppState>) -> Result<()> {
             }
             println!();
             
-            // Get current directory conversation if it exists
-            println!("📍 Current Directory:");
+            // Get latest conversation (most recently modified)
+            println!("📍 Latest Conversation:");
             match db.get_current_conversation(None) {
                 Ok(Some(conv)) => {
                     let usage_details = db.get_token_usage(&conv);
@@ -268,8 +268,8 @@ async fn run_status_check(state: Arc<AppState>) -> Result<()> {
                     println!("  - Estimated session cost: ${:.4}", session_cost);
                 }
                 Ok(None) => {
-                    println!("! No active conversation in current directory");
-                    println!("  Try running from a directory where you've used Q");
+                    println!("! No conversations found in the database");
+                    println!("  Start using Q to see activity here");
                 }
                 Err(e) => {
                     println!("✗ Error reading conversation: {}", e);

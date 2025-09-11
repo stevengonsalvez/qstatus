@@ -46,11 +46,14 @@ pub struct BurnRate {
     pub tokens_per_minute: f64,
     pub cost_per_minute: f64,
     pub snapshots: VecDeque<TokenSnapshot>,  // Keep last 10 minutes of snapshots
+    pub ema_tokens_per_minute: f64,  // Exponential Moving Average
+    pub last_update: DateTime<Local>,
+    pub last_total_tokens: u64,
 }
 
 #[derive(Debug, Clone)]
 pub enum ViewMode {
-    CurrentDirectory,  // Show only current directory's conversation
+    CurrentDirectory,  // Show latest conversation (most recently modified)
     GlobalOverview,    // Show all conversations summary
     ConversationList,  // List all conversations
     SessionList,       // List all sessions grouped by directory
@@ -122,6 +125,9 @@ impl AppState {
                 tokens_per_minute: 0.0,
                 cost_per_minute: 0.0,
                 snapshots: VecDeque::with_capacity(10),
+                ema_tokens_per_minute: 0.0,
+                last_update: Local::now(),
+                last_total_tokens: 0,
             })),
             period_metrics: Arc::new(Mutex::new(None)),
         }

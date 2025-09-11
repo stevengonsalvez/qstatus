@@ -89,7 +89,7 @@ impl Dashboard {
                 self.render_global_overview(frame, area);
             }
             crate::app::state::ViewMode::CurrentDirectory => {
-                // Original layout for current directory view
+                // Original layout for latest conversation view
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -117,7 +117,7 @@ impl Dashboard {
 
     fn render_token_gauge(&self, frame: &mut Frame, area: Rect) {
         let usage = self.state.token_usage.lock().unwrap();
-        let percentage = usage.percentage.min(100.0);
+        let percentage = usage.percentage;  // Already capped in database.rs
         let color = self.get_usage_color(percentage);
         
         // Get compaction status indicator
@@ -551,7 +551,7 @@ impl Dashboard {
                         conv_id,
                         session.token_usage.total_tokens,
                         session.token_usage.context_window,
-                        window_pct.min(100.0), // Cap display at 100%
+                        if window_pct >= 100.0 { 100.0 } else if window_pct > 99.9 { 99.9 } else { window_pct },
                         usage_indicator,
                         session.message_count,
                         cost_text
@@ -642,11 +642,15 @@ impl Dashboard {
                 "  Total: {} / {} ({:.1}% used)",
                 session.token_usage.total_tokens,
                 session.token_usage.context_window,
-                session.token_usage.percentage.min(100.0)
+                session.token_usage.percentage  // Already capped in database.rs
             )));
             
             let remaining = session.token_usage.context_window.saturating_sub(session.token_usage.total_tokens);
-            let remaining_pct = (100.0 - session.token_usage.percentage).max(0.0);
+            let remaining_pct = if session.token_usage.percentage >= 100.0 {
+                0.0
+            } else {
+                100.0 - session.token_usage.percentage
+            };
             text.push(Line::from(format!(
                 "  Remaining: {} tokens ({:.1}% available)",
                 remaining,
@@ -741,12 +745,14 @@ impl Dashboard {
             ]));
             
             // Message quota
+            let msg_pct = (stats.message_quota_used as f64 / stats.message_quota_limit as f64) * 100.0;
+            let msg_pct = if msg_pct >= 100.0 { 100.0 } else if msg_pct > 99.9 { 99.9 } else { msg_pct };
             text.push(Line::from(Span::styled(
                 format!(
                     "Message Quota (Month): {} / {} ({:.1}%)",
                     stats.message_quota_used,
                     stats.message_quota_limit,
-                    (stats.message_quota_used as f64 / stats.message_quota_limit as f64) * 100.0
+                    msg_pct
                 ),
                 Style::default().fg(Color::Yellow),
             )));
@@ -794,6 +800,19 @@ impl Dashboard {
     }
     
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
+        // Split footer into two rows: stats and keybinds
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Stats line
+                Constraint::Length(2), // Keybinds
+            ])
+            .split(area);
+
+        // Render stats line at top of footer
+        self.render_stats_line(frame, chunks[0]);
+        
+        // Render keybinds at bottom
         let view_mode = self.state.view_mode.lock().unwrap().clone();
         
         let keybinds = match view_mode {
@@ -852,12 +871,86 @@ impl Dashboard {
         let footer = Paragraph::new(Line::from(spans))
             .block(
                 Block::default()
-                    .borders(Borders::ALL)
+                    .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
                     .border_style(Style::default().fg(Color::DarkGray)),
             )
             .alignment(Alignment::Center);
 
-        frame.render_widget(footer, area);
+        frame.render_widget(footer, chunks[1]);
+    }
+    
+    fn render_stats_line(&self, frame: &mut Frame, area: Rect) {
+        let global_stats = self.state.global_stats.lock().unwrap();
+        
+        let mut spans = vec![];
+        
+        if let Some(ref stats) = *global_stats {
+            let avg_window = 175_000u64; // Average context window
+            
+            // Calculate percentages with cap at 99.9%
+            let token_percentage = if stats.total_tokens > 0 && stats.total_conversations > 0 {
+                let total_capacity = avg_window * stats.total_conversations as u64;
+                let pct = (stats.total_tokens as f64 / total_capacity as f64) * 100.0;
+                if pct >= 100.0 { 100.0 } else if pct > 99.9 { 99.9 } else { pct }
+            } else {
+                0.0
+            };
+            
+            let message_percentage = if stats.message_quota_limit > 0 {
+                let pct = (stats.message_quota_used as f64 / stats.message_quota_limit as f64) * 100.0;
+                if pct >= 100.0 { 100.0 } else if pct > 99.9 { 99.9 } else { pct }
+            } else {
+                0.0
+            };
+            
+            // Token usage
+            spans.push(Span::raw("Tokens: "));
+            let total_capacity = if stats.total_conversations > 0 {
+                avg_window * stats.total_conversations as u64
+            } else {
+                avg_window
+            };
+            spans.push(Span::styled(
+                format!("{}/{}", stats.total_tokens, total_capacity),
+                Style::default().fg(Color::Cyan),
+            ));
+            spans.push(Span::raw(format!(" ({:.1}%) ", token_percentage)));
+            
+            spans.push(Span::raw(" • "));
+            
+            // Cost
+            spans.push(Span::raw("Cost: "));
+            spans.push(Span::styled(
+                format!("${:.2}", stats.total_cost_estimate),
+                Style::default().fg(Color::Green),
+            ));
+            
+            spans.push(Span::raw(" • "));
+            
+            // Message quota
+            spans.push(Span::raw("Messages: "));
+            spans.push(Span::styled(
+                format!("{}/{}", stats.message_quota_used, stats.message_quota_limit),
+                Style::default().fg(
+                    if message_percentage > 90.0 {
+                        Color::Red
+                    } else if message_percentage > 70.0 {
+                        Color::Yellow
+                    } else {
+                        Color::Green
+                    }
+                ),
+            ));
+            spans.push(Span::raw(format!(" ({:.1}%) ", message_percentage)));
+        } else {
+            spans.push(Span::raw("Loading statistics..."));
+        }
+        
+        let stats_line = Paragraph::new(Line::from(spans))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray));
+        
+        frame.render_widget(stats_line, area);
     }
 
     fn render_help_overlay(&self, _frame: &mut Frame, _area: Rect) {
@@ -889,7 +982,7 @@ impl Dashboard {
                 true
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
-                // Show current directory view
+                // Show latest conversation view
                 *view_mode = crate::app::state::ViewMode::CurrentDirectory;
                 true
             }

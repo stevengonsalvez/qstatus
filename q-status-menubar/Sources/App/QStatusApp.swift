@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         let settings = SettingsStore()
         let metrics = MetricsCalculator()
-        let reader = QDBReader()
+        let reader = QDBReader(defaultContextWindow: settings.defaultContextWindowTokens)
         let coordinator = UpdateCoordinator(reader: reader, metrics: metrics, settings: settings)
 
         let controller = MenuBarController(coordinator: coordinator, settings: settings)

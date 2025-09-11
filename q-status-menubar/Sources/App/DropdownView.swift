@@ -16,27 +16,38 @@ struct DropdownView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Overall").font(.headline)
                     Spacer()
-                    if let ctx = activeSessionContextPercent() {
+                    // Only show percentage when we have active sessions and not in group mode
+                    if !(viewModel.settings?.groupByFolder ?? false), !viewModel.sessions.isEmpty, let ctx = activeSessionContextPercent() {
                         Text("\(ctx)%")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundStyle(contextPercentColor(Double(ctx) ?? 0))
-                            .help("Most‑recent session context usage")
+                            .help("Most recent session context usage")
                     }
                 }
                 .font(.caption)
                 
-                // Global totals display
+                // Global totals display with message quota
                 if viewModel.globalSessions > 0 {
-                    HStack {
-                        Text("Global: \(viewModel.globalSessions) sessions • \(formatTokens(viewModel.globalTokens)) tokens • \(CostEstimator.formatUSD(viewModel.globalCost))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("Sessions: \(viewModel.globalSessions) • Tokens: \(formatTokens(viewModel.globalTokens)) • Cost: \(CostEstimator.formatUSD(viewModel.globalCost))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        HStack {
+                            let msgPercent = Int((Double(viewModel.messagesMonth) / 5000.0) * 100)
+                            Text("Messages: \(viewModel.messagesMonth) / 5000 (\(msgPercent)%)")
+                                .font(.caption)
+                                .foregroundStyle(messageQuotaColor(viewModel.messagesMonth))
+                                .help("Monthly message quota usage: \(msgPercent)% used")
+                            Spacer()
+                        }
                     }
                 }
                 
                 HStack {
-                    Text("Cost: M \(CostEstimator.formatUSD(viewModel.costMonth)) • W \(CostEstimator.formatUSD(viewModel.costWeek)) • Y \(CostEstimator.formatUSD(viewModel.costYear))")
+                    Text("Period Costs: Month \(CostEstimator.formatUSD(viewModel.costMonth)) • Week \(CostEstimator.formatUSD(viewModel.costWeek))")
                     Spacer()
                     Toggle("Detailed", isOn: Binding(get: { !(viewModel.settings?.compactMode ?? true) }, set: { viewModel.settings?.compactMode = !$0 }))
                         .toggleStyle(.switch)
@@ -56,9 +67,9 @@ struct DropdownView: View {
             
             Divider()
             
-            // Recent Sessions header block with compact bars
+            // Recent Sessions header block with compact bars and folder names
             if !viewModel.sessions.isEmpty {
-                let recentSessions = viewModel.sessions.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }.prefix(3)
+                let recentSessions = viewModel.sessions.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }.prefix(5)
                 if !recentSessions.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Recent Sessions")
@@ -66,33 +77,38 @@ struct DropdownView: View {
                             .foregroundStyle(.secondary)
                         VStack(spacing: 4) {
                             ForEach(Array(recentSessions), id: \.id) { session in
-                                HStack(spacing: 8) {
-                                    Text(cwdTail2(session.cwd ?? session.id))
-                                        .font(.system(size: 10, design: .monospaced))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    // Folder name above the bar
+                                    Text(folderName(session.cwd ?? session.id))
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
                                         .lineLimit(1)
-                                        .frame(width: 120, alignment: .leading)
+                                        .truncationMode(.middle)
+                                        .help(session.cwd ?? session.id)
                                     
-                                    // Compact progress bar showing context usage
-                                    GeometryReader { geo in
-                                        ZStack(alignment: .leading) {
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(Color.gray.opacity(0.2))
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(contextPercentColor(session.usagePercent))
-                                                .frame(width: geo.size.width * min(1.0, session.usagePercent / 100.0))
+                                    HStack(spacing: 8) {
+                                        // Compact progress bar showing context usage
+                                        GeometryReader { geo in
+                                            ZStack(alignment: .leading) {
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(Color.gray.opacity(0.2))
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(contextPercentColor(session.usagePercent))
+                                                    .frame(width: geo.size.width * min(1.0, session.usagePercent / 100.0))
+                                            }
                                         }
+                                        .frame(height: 6)
+                                        
+                                        Text("\(Int(session.usagePercent))%")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 30, alignment: .trailing)
+                                        
+                                        Text("\(formatTokens(session.tokensUsed))")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 40, alignment: .trailing)
                                     }
-                                    .frame(height: 4)
-                                    
-                                    Text("\(Int(session.usagePercent))%")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 30, alignment: .trailing)
-                                    
-                                    Text("\(formatTokens(session.tokensUsed))")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 40, alignment: .trailing)
                                 }
                             }
                         }
@@ -110,23 +126,36 @@ struct DropdownView: View {
             }
 
             Divider()
-            // Footer: Today / Week / Month
+            // Footer: Today / Week / Month with message quota
             if showDetailed {
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                GridRow {
-                    Text("Today").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(viewModel.tokensToday) • \(CostEstimator.formatUSD(viewModel.costToday))").font(.caption)
+            VStack(spacing: 8) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Today").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.tokensToday)) • \(CostEstimator.formatUSD(viewModel.costToday))").font(.caption)
+                    }
+                    GridRow {
+                        Text("Week").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.tokensWeek)) • \(CostEstimator.formatUSD(viewModel.costWeek))").font(.caption)
+                    }
+                    GridRow {
+                        Text("Month").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.tokensMonth)) • \(CostEstimator.formatUSD(viewModel.costMonth))").font(.caption)
+                    }
                 }
-                GridRow {
-                    Text("Week").font(.caption).foregroundStyle(.secondary)
+                // Message quota footer line
+                HStack {
+                    let msgPercent = min(100, Int((Double(viewModel.messagesMonth) / 5000.0) * 100))
+                    Text("Monthly Messages:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(viewModel.tokensWeek) • \(CostEstimator.formatUSD(viewModel.costWeek))").font(.caption)
-                }
-                GridRow {
-                    Text("Month").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(viewModel.tokensMonth) • \(CostEstimator.formatUSD(viewModel.costMonth))").font(.caption)
+                    Text("\(viewModel.messagesMonth) / 5000 (\(msgPercent)%)")
+                        .font(.caption)
+                        .foregroundStyle(messageQuotaColor(viewModel.messagesMonth))
                 }
             }
             }
@@ -160,7 +189,8 @@ struct DropdownView: View {
                             Button(action: { viewModel.onSelectSession?(s) }) {
                                 SessionRow(session: s, categories: viewModel.sessionCategoryTokens[s.id])
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ClickableRowButtonStyle())
+                            .help("Click to view session details")
                         }
                     }
                 }
@@ -188,20 +218,11 @@ struct DropdownView: View {
                     }
                     VStack(spacing: 6) {
                         ForEach(topSortedGlobalTop().prefix(5), id: \.id) { s in
-                            Button(action: { viewModel.onSelectSession?(s) }) {
-                                HStack {
-                                    Text(cwdTail2(s.cwd ?? s.id))
-                                        .font(.system(.caption, design: .monospaced))
-                                    Spacer()
-                                    Text("\(formatTokens(s.tokensUsed)) • \(Int(s.usagePercent))% • \(CostEstimator.formatUSD(s.costUSD)) • \(s.messageCount) msgs")
-                                        .font(.caption2)
-                                }
-                            }
-                            .buttonStyle(.plain)
+                            TopSessionRow(session: s, onSelect: { viewModel.onSelectSession?(s) })
                         }
                     }
                     HStack {
-                        Button("View All…") { viewModel.onOpenAll?() }
+                        ViewAllButton(action: { viewModel.onOpenAll?() })
                         Spacer()
                     }
                 }
@@ -217,8 +238,8 @@ struct DropdownView: View {
         .padding(14)
         .frame(width: 400)
         .sheet(item: Binding(get: { viewModel.selectedSession }, set: { _ in viewModel.selectedSession = nil })) { details in
-            SessionDetailView(details: details)
-                .frame(width: 420, height: 360)
+            SessionDetailView(details: details, messagesMonth: viewModel.messagesMonth)
+                .frame(width: 420, height: 400)
                 .padding()
         }
         .sheet(isPresented: $viewModel.showAllSheet) {
@@ -334,12 +355,140 @@ extension DropdownView {
         if comps.count >= 2 { return comps.suffix(2).joined(separator: "/") }
         return comps.last.map(String.init) ?? p
     }
+    
+    fileprivate func folderName(_ p: String) -> String {
+        // Extract just the last folder component for display
+        let comps = p.split(separator: "/").filter { !$0.isEmpty }
+        return comps.last.map(String.init) ?? p
+    }
+    
+    fileprivate func messageQuotaColor(_ messages: Int) -> Color {
+        let quota = 5000
+        let percent = Double(messages) / Double(quota) * 100
+        if percent >= 90 { return .red }
+        if percent >= 75 { return .orange }
+        if percent >= 50 { return .yellow }
+        return .secondary
+    }
 }
 
 private enum TopSort: String, CaseIterable { case tokens, usage, cost }
 
+// Custom button style for clickable session rows
+struct ClickableRowButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.accentColor.opacity(0.1) : 
+                          configuration.isPressed ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+                    .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isHovered ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .onHover { hovering in
+                isHovered = hovering
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+    }
+}
+
+// Custom view for Top Session rows with hover effects
+struct TopSessionRow: View {
+    let session: SessionSummary
+    let onSelect: () -> Void
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Text(cwdTail2(session.cwd ?? session.id))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(isHovered ? .primary : .secondary)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+                
+                Spacer()
+                
+                Text("\(formatTokens(session.tokensUsed)) • \(Int(session.usagePercent))% • \(CostEstimator.formatUSD(session.costUSD)) • \(session.messageCount) msgs")
+                    .font(.caption2)
+                    .foregroundColor(isHovered ? .primary : .secondary)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+                
+                // Chevron indicator showing it's clickable
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(isHovered ? Color.blue : Color.blue.opacity(0.85))
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+            }
+        }
+        .buttonStyle(ClickableRowButtonStyle())
+        .help("Click to view session details")
+    }
+    
+    private func cwdTail2(_ p: String) -> String {
+        let comps = p.split(separator: "/").filter { !$0.isEmpty }
+        if comps.count >= 2 { return comps.suffix(2).joined(separator: "/") }
+        return comps.last.map(String.init) ?? p
+    }
+    
+    private func formatTokens(_ t: Int) -> String { 
+        t >= 1000 ? "\(t/1000)k" : "\(t)" 
+    }
+}
+
+// Custom button for View All with enhanced styling
+struct ViewAllButton: View {
+    let action: () -> Void
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("View All")
+                    .font(.system(.caption, weight: .medium))
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.system(size: 11))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.accentColor : Color.accentColor.opacity(0.8))
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
+            )
+            .foregroundColor(.white)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+        .help("View all sessions with pagination")
+    }
+}
+
 struct SessionDetailView: View {
     let details: SessionDetails
+    let messagesMonth: Int
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -365,6 +514,28 @@ struct SessionDetailView: View {
                 GridRow { Text("System Prompts"); Spacer(); Text("\(formatTokens(details.systemTokens))") }
                 GridRow { Text("Messages"); Spacer(); Text("\(details.summary.messageCount)") }
             }
+            Divider()
+            // Footer with standardized information
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Session Cost:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(CostEstimator.formatUSD(details.summary.costUSD))
+                        .font(.caption)
+                }
+                HStack {
+                    let msgPercent = min(100, Int((Double(messagesMonth) / 5000.0) * 100))
+                    Text("Monthly Messages:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(messagesMonth) / 5000 (\(msgPercent)%)")
+                        .font(.caption)
+                        .foregroundStyle(messageQuotaColor(messagesMonth))
+                }
+            }
             Spacer()
             HStack {
                 Button("Copy ID") { copyToClipboard(details.summary.id) }
@@ -387,13 +558,23 @@ struct SessionDetailView: View {
         let expanded = (p as NSString).expandingTildeInPath
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: expanded)])
     }
+    private func messageQuotaColor(_ messages: Int) -> Color {
+        let quota = 5000
+        let percent = Double(messages) / Double(quota) * 100
+        if percent >= 90 { return .red }
+        if percent >= 75 { return .orange }
+        if percent >= 50 { return .yellow }
+        return .secondary
+    }
 }
 
 struct SessionRow: View {
     let session: SessionSummary
     let categories: (history:Int, context:Int, tools:Int, system:Int)?
+    @State private var isParentHovered = false
+    
     var body: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 if let cwd = session.cwd, !cwd.isEmpty {
                     HStack(spacing: 4) {
@@ -409,6 +590,13 @@ struct SessionRow: View {
                 }
             }
             Spacer()
+            
+            // Chevron indicator for clickability
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Color.blue)
+                .imageScale(.medium)
+            
             VStack(alignment: .trailing, spacing: 4) {
                 ProgressView(value: min(max(session.usagePercent/100.0, 0), 1))
                     .tint(color(for: session))
@@ -480,28 +668,44 @@ struct AllSessionsSheet: View {
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(filteredSortedAll, id: \.id) { s in
-                        Button(action: { viewModel.onSelectSession?(s) }) { SessionRow(session: s, categories: viewModel.sessionCategoryTokens[s.id]) }
-                            .buttonStyle(.plain)
+                        Button(action: { viewModel.onSelectSession?(s) }) { 
+                            SessionRow(session: s, categories: viewModel.sessionCategoryTokens[s.id]) 
+                        }
+                        .buttonStyle(ClickableRowButtonStyle())
+                        .help("Click to view session details")
                     }
                 }
             }
-            // Footer for this page: day/week/month subset totals (if available)
+            // Footer for this page: day/week/month subset totals with message quota
             Divider()
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                GridRow {
-                    Text("Page Today").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(viewModel.sheetTokensDay) • \(CostEstimator.formatUSD(viewModel.sheetCostDay))").font(.caption)
+            VStack(spacing: 8) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Page Today").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.sheetTokensDay)) • \(CostEstimator.formatUSD(viewModel.sheetCostDay))").font(.caption)
+                    }
+                    GridRow {
+                        Text("Page Week").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.sheetTokensWeek)) • \(CostEstimator.formatUSD(viewModel.sheetCostWeek))").font(.caption)
+                    }
+                    GridRow {
+                        Text("Page Month").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(formatTokens(viewModel.sheetTokensMonth)) • \(CostEstimator.formatUSD(viewModel.sheetCostMonth))").font(.caption)
+                    }
                 }
-                GridRow {
-                    Text("Page Week").font(.caption).foregroundStyle(.secondary)
+                // Message quota footer line
+                HStack {
+                    let msgPercent = min(100, Int((Double(viewModel.messagesMonth) / 5000.0) * 100))
+                    Text("Monthly Messages:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(viewModel.sheetTokensWeek) • \(CostEstimator.formatUSD(viewModel.sheetCostWeek))").font(.caption)
-                }
-                GridRow {
-                    Text("Page Month").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(viewModel.sheetTokensMonth) • \(CostEstimator.formatUSD(viewModel.sheetCostMonth))").font(.caption)
+                    Text("\(viewModel.messagesMonth) / 5000 (\(msgPercent)%)")
+                        .font(.caption)
+                        .foregroundStyle(messageQuotaColor(viewModel.messagesMonth))
                 }
             }
             Divider()
@@ -534,6 +738,17 @@ struct AllSessionsSheet: View {
         case .id:
             return arr.sorted { $0.id < $1.id }
         }
+    }
+    
+    private func formatTokens(_ t: Int) -> String { t >= 1000 ? "\(t/1000)k" : "\(t)" }
+    
+    private func messageQuotaColor(_ messages: Int) -> Color {
+        let quota = 5000
+        let percent = Double(messages) / Double(quota) * 100
+        if percent >= 90 { return .red }
+        if percent >= 75 { return .orange }
+        if percent >= 50 { return .yellow }
+        return .secondary
     }
 }
 
