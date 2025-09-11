@@ -3,10 +3,10 @@
 
 use crate::utils::error::{QStatusError, Result};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::path::PathBuf;
-use chrono::{DateTime, Local, Duration, TimeZone, Datelike};
+use chrono::{DateTime, Local, Duration, TimeZone};
 
 #[derive(Debug, Clone)]
 pub enum CompactionStatus {
@@ -92,9 +92,43 @@ pub struct DirectoryActivity {
     pub q_invocations: usize,
 }
 
+// Custom deserializer for history field that can handle both array and object formats
+fn deserialize_history<'de, D>(deserializer: D) -> std::result::Result<Vec<Vec<Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    
+    match value {
+        Value::Array(arr) => {
+            // Try to parse as Vec<Vec<Value>>
+            let mut result = Vec::new();
+            for item in arr {
+                if let Value::Array(inner) = item {
+                    result.push(inner);
+                } else {
+                    // If inner item is not an array, wrap it
+                    result.push(vec![item]);
+                }
+            }
+            Ok(result)
+        }
+        Value::Object(_) => {
+            // If it's an object, return empty array for now
+            // This handles the case where history is stored as a map
+            Ok(Vec::new())
+        }
+        _ => {
+            // For any other type, return empty array
+            Ok(Vec::new())
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct QConversation {
     pub conversation_id: String,
+    #[serde(deserialize_with = "deserialize_history", default)]
     pub history: Vec<Vec<Value>>,  // Nested array of message pairs
     pub context_message_length: Option<u64>,
     pub valid_history_range: Option<(usize, usize)>,
@@ -178,22 +212,20 @@ impl QDatabase {
         Ok(changed)
     }
 
-    pub fn get_current_conversation(&self, cwd: Option<&str>) -> Result<Option<QConversation>> {
-        let current_dir = std::env::current_dir().map_err(|e| QStatusError::Io(e))?;
-        let current_dir_str = current_dir.to_string_lossy();
-        let key = cwd.unwrap_or(&current_dir_str);
-
-        let result: Option<String> = self
+    pub fn get_current_conversation(&self, _cwd: Option<&str>) -> Result<Option<QConversation>> {
+        // Get the latest conversation by rowid (most recently modified)
+        // This makes it independent of current directory
+        let result: Option<(String, String)> = self
             .conn
             .query_row(
-                "SELECT value FROM conversations WHERE key = ?1",
-                [key],
-                |row| row.get(0),
+                "SELECT key, value FROM conversations ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
 
         match result {
-            Some(json_str) => {
+            Some((_key, json_str)) => {
                 let conversation: QConversation = serde_json::from_str(&json_str)?;
                 Ok(Some(conversation))
             }
@@ -233,7 +265,15 @@ impl QDatabase {
         let context_window = 175_000u64;
         let total_tokens = total_tokens.min(context_window);
         
-        let percentage = (total_tokens as f64 / context_window as f64) * 100.0;
+        // Cap percentage at 99.9% unless truly at 100%
+        let raw_percentage = (total_tokens as f64 / context_window as f64) * 100.0;
+        let percentage = if raw_percentage >= 100.0 {
+            100.0
+        } else if raw_percentage > 99.9 {
+            99.9
+        } else {
+            raw_percentage
+        };
         
         // Determine compaction status based on thresholds
         let compaction_status = match percentage {
@@ -248,7 +288,7 @@ impl QDatabase {
             context_tokens,
             total_tokens,
             context_window,
-            percentage: percentage.min(100.0), // Cap at 100%
+            percentage,  // Already capped appropriately above
             compaction_status,
             has_summary: conversation.latest_summary.is_some(),
             message_count: conversation.history.len(),

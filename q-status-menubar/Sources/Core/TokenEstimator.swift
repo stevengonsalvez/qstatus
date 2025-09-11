@@ -49,9 +49,15 @@ public enum TokenEstimator {
             if let env = obj["env_context"] as? [String: Any],
                let es = env["env_state"] as? [String: Any],
                let path = es["current_working_directory"] as? String { cwd = path }
-            if let history = obj["history"] as? [Any] {
-                messages = history.count
-                for item in history { totalChars += deepCount(item) }
+            // Handle history field that may be either array or object
+            if let historyArray = obj["history"] as? [Any] {
+                messages = historyArray.count
+                for item in historyArray { totalChars += deepCount(item) }
+            } else if let historyDict = obj["history"] as? [String: Any] {
+                // History is an object, count its content
+                totalChars += deepCount(historyDict)
+                // Try to estimate messages from the object structure
+                messages = historyDict.count
             } else {
                 totalChars += deepCount(obj)
             }
@@ -86,11 +92,29 @@ public enum TokenEstimator {
             if let env = obj["env_context"] as? [String: Any],
                let es = env["env_state"] as? [String: Any],
                let path = es["current_working_directory"] as? String { cwd = path }
-            if let history = obj["history"] as? [Any] {
-                messages = history.count
-                for item in history {
+            // Handle history field that may be either array or object
+            if let historyArray = obj["history"] as? [Any] {
+                messages = historyArray.count
+                for item in historyArray {
                     historyChars += deepCount(item)
                     if let d = item as? [String: Any] {
+                        if let u = d["user"] {
+                            if deepContainsCompaction(u) { markers = true }
+                            userChars += deepCount(u)
+                        }
+                        if let a = d["assistant"] {
+                            if deepContainsCompaction(a) { markers = true }
+                            assistantChars += deepCount(a)
+                        }
+                    }
+                }
+            } else if let historyDict = obj["history"] as? [String: Any] {
+                // History is an object, process it differently
+                historyChars += deepCount(historyDict)
+                messages = historyDict.count
+                // Try to extract user/assistant data from the object structure
+                for (_, value) in historyDict {
+                    if let d = value as? [String: Any] {
                         if let u = d["user"] {
                             if deepContainsCompaction(u) { markers = true }
                             userChars += deepCount(u)

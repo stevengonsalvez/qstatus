@@ -22,6 +22,7 @@ public struct QDBConfig: Sendable {
 public actor QDBReader {
     private let config: QDBConfig
     private var dbPool: DatabasePool?
+    private let defaultContextWindow: Int
     // History table exists but is never populated by Q CLI - removed usage
 
     // Minimal schema expectations for amazon-q data.sqlite3
@@ -32,8 +33,9 @@ public actor QDBReader {
     }
     private var schema = SchemaMap(conversationsTable: "conversations", keyColumn: "key", valueColumn: "value")
 
-    public init(config: QDBConfig = QDBConfig()) {
+    public init(config: QDBConfig = QDBConfig(), defaultContextWindow: Int = 175_000) {
         self.config = config
+        self.defaultContextWindow = defaultContextWindow
     }
 
     public func openIfNeeded() async throws {
@@ -156,13 +158,23 @@ public actor QDBReader {
                            )
                          ) AS last_ts
                   FROM page p
-                  LEFT JOIN json_each(p.value,'$.history') AS h
+                  LEFT JOIN json_each(CASE 
+                    WHEN json_type(json_extract(p.value,'$.history')) = 'array' 
+                    THEN json_extract(p.value,'$.history')
+                    ELSE '[]'
+                  END) AS h
                   ON 1
                   GROUP BY p.key
                 )
                 SELECT p.key,
-                       COALESCE(json_extract(p.value,'$.model_info.context_window_tokens'), 200000) AS ctx_tokens,
-                       COALESCE(json_array_length(json_extract(p.value,'$.history')), 0) AS msg_count,
+                       COALESCE(json_extract(p.value,'$.model_info.context_window_tokens'), \(self.defaultContextWindow)) AS ctx_tokens,
+                       CASE 
+                         WHEN json_type(json_extract(p.value,'$.history')) = 'array' 
+                         THEN COALESCE(json_array_length(json_extract(p.value,'$.history')), 0)
+                         WHEN json_type(json_extract(p.value,'$.history')) = 'object'
+                         THEN COALESCE(json_array_length(json_extract(p.value,'$.history'), '$'), 0)
+                         ELSE 0
+                       END AS msg_count,
                        json_extract(p.value,'$.env_context.env_state.current_working_directory') AS cwd,
                        json_extract(p.value,'$.model_info.model_id') AS model_id,
                        COALESCE(length(json_extract(p.value,'$.history')), 0) AS history_chars,
@@ -180,7 +192,7 @@ public actor QDBReader {
                 let rows = try Row.fetchAll(db, sql: sql, arguments: [limit, offset])
                 for r in rows {
                     let key: String = r["key"] ?? ""
-                    let ctxTokens: Int = r["ctx_tokens"] ?? 200000
+                    let ctxTokens: Int = r["ctx_tokens"] ?? self.defaultContextWindow
                     let msgCount: Int = r["msg_count"] ?? 0
                     let cwd: String? = r["cwd"]
                     let modelId: String? = r["model_id"]
@@ -198,7 +210,9 @@ public actor QDBReader {
                                                              systemChars: sysChars,
                                                              fallbackChars: fallbackChars)
                     let tokens = TokenEstimator.estimateTokens(breakdown: breakdown)
-                    let usage = ctxTokens > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctxTokens))*100.0)) : 0
+                    // Cap at 99.9% unless truly at or above limit
+                    let rawUsage = ctxTokens > 0 ? (Double(tokens)/Double(ctxTokens))*100.0 : 0
+                    let usage = tokens >= ctxTokens ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     let rowid: Int64? = r["internal_rowid"]
                     results.append(SessionSummary(id: key, cwd: cwd, tokensUsed: tokens, contextWindow: ctxTokens, usagePercent: usage, messageCount: msgCount, lastActivity: lastDate ?? now, state: state, internalRowID: rowid, hasCompactionIndicators: false, modelId: modelId, costUSD: 0.0))
@@ -211,8 +225,10 @@ public actor QDBReader {
                     var agg: [SessionSummary] = []
                     for (cwd, arr) in grouped {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
-                        let ctx = 200_000
-                        let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0
+                        let ctx = self.defaultContextWindow
+                        // Cap at 99.9% unless truly at or above limit
+                        let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
+                        let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
                     }
                     return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
@@ -228,8 +244,10 @@ public actor QDBReader {
                 for r in rows {
                     guard let key: String = r["key"], let value: String = r["value"] else { continue }
                     let est = TokenEstimator.estimate(from: value)
-                    let ctx = est.contextWindow ?? 200_000
-                    let usage = ctx > 0 ? min(100.0, max(0.0, (Double(est.tokens)/Double(ctx))*100.0)) : 0
+                    let ctx = est.contextWindow ?? self.defaultContextWindow
+                    // Cap at 99.9% unless truly at or above limit
+                    let rawUsage = ctx > 0 ? (Double(est.tokens)/Double(ctx))*100.0 : 0
+                    let usage = est.tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     let lastDate: Date? = nil // unknown in fallback
                     results.append(SessionSummary(id: key, cwd: est.cwd, tokensUsed: est.tokens, contextWindow: ctx, usagePercent: usage, messageCount: est.messages, lastActivity: lastDate ?? now, state: state, internalRowID: nil, hasCompactionIndicators: false, modelId: est.modelId, costUSD: 0.0))
@@ -240,8 +258,10 @@ public actor QDBReader {
                     var agg: [SessionSummary] = []
                     for (cwd, arr) in grouped {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
-                        let ctx = 200_000
-                        let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0
+                        let ctx = self.defaultContextWindow
+                        // Cap at 99.9% unless truly at or above limit
+                        let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
+                        let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
                     }
                     return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
@@ -260,8 +280,10 @@ public actor QDBReader {
                     let rowid: Int64? = row["rowid"]
                     guard let json = value else { return nil }
                     let breakdown = TokenEstimator.estimateBreakdown(from: json)
-                    let ctx = breakdown.contextWindow ?? 200_000
-                    let usage = ctx > 0 ? min(100.0, max(0.0, (Double(breakdown.totalTokens)/Double(ctx))*100.0)) : 0
+                    let ctx = breakdown.contextWindow ?? self.defaultContextWindow
+                    // Cap at 99.9% unless truly at or above limit
+                    let rawUsage = ctx > 0 ? (Double(breakdown.totalTokens)/Double(ctx))*100.0 : 0
+                    let usage = breakdown.totalTokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     let summary = SessionSummary(id: key, cwd: breakdown.cwd, tokensUsed: breakdown.totalTokens, contextWindow: ctx, usagePercent: usage, messageCount: breakdown.messages, lastActivity: Date(), state: state, internalRowID: rowid, hasCompactionIndicators: breakdown.compactionMarkers, modelId: breakdown.modelId, costUSD: 0.0)
                     return SessionDetails(summary: summary, historyTokens: breakdown.historyTokens, contextFilesTokens: breakdown.contextFilesTokens, toolsTokens: breakdown.toolsTokens, systemTokens: breakdown.systemTokens)
@@ -316,7 +338,7 @@ public actor QDBReader {
                         COALESCE(length(json_extract(value,'$.tool_manager')),0) +
                         COALESCE(length(json_extract(value,'$.system_prompts')),0)
                       ) ELSE length(value) END) / 4.0
-                    ) >= COALESCE(json_extract(value,'$.model_info.context_window_tokens'),200000) * 0.9
+                    ) >= COALESCE(json_extract(value,'$.model_info.context_window_tokens'),\(self.defaultContextWindow)) * 0.9
                     THEN 1 ELSE 0 END
                   ) AS near_count
                 FROM conversations;
@@ -341,7 +363,7 @@ public actor QDBReader {
                     COALESCE(length(json_extract(value,'$.tool_manager')),0) +
                     COALESCE(length(json_extract(value,'$.system_prompts')),0)
                   ) ELSE length(value) END) AS chars,
-                  COALESCE(json_extract(value,'$.model_info.context_window_tokens'),200000) AS ctx
+                  COALESCE(json_extract(value,'$.model_info.context_window_tokens'),\(self.defaultContextWindow)) AS ctx
                 FROM conversations
                 ORDER BY chars DESC
                 LIMIT ?;
@@ -351,9 +373,11 @@ public actor QDBReader {
                 for r in rows {
                     let key: String = r["key"] ?? ""
                     let chars: Int = r["chars"] ?? 0
-                    let ctx: Int = r["ctx"] ?? 200000
+                    let ctx: Int = r["ctx"] ?? self.defaultContextWindow
                     let tokens = Int((((Double(chars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
-                    let usage = ctx > 0 ? min(100.0, max(0.0, (Double(tokens)/Double(ctx))*100.0)) : 0.0
+                    // Cap at 99.9% unless truly at or above limit
+                    let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0.0
+                    let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
                     top.append(SessionSummary(id: key, cwd: nil, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: 0, lastActivity: nil, state: state, internalRowID: nil, hasCompactionIndicators: false, modelId: nil, costUSD: 0.0))
                 }
@@ -380,7 +404,13 @@ public actor QDBReader {
         WITH per_conv AS (
           SELECT 
             json_extract(value,'$.model_info.model_id') AS model_id,
-            COALESCE(json_array_length(json_extract(value,'$.history')), 0) AS msgs,
+            CASE 
+              WHEN json_type(json_extract(value,'$.history')) = 'array' 
+              THEN COALESCE(json_array_length(json_extract(value,'$.history')), 0)
+              WHEN json_type(json_extract(value,'$.history')) = 'object'
+              THEN COALESCE(json_array_length(json_extract(value,'$.history'), '$'), 0)
+              ELSE 0
+            END AS msgs,
             CASE WHEN (
               COALESCE(length(json_extract(value,'$.history')),0) +
               COALESCE(length(json_extract(value,'$.context_manager.context_files')),0) +
@@ -422,9 +452,17 @@ public actor QDBReader {
         let supportsJSON1 = await json1Available()
         if supportsJSON1 {
             return try await dbPool.read { db in
-                // Sum up message counts from all conversations
+                // Sum up message counts from all conversations, handling both array and object types
                 let sql = """
-                SELECT SUM(COALESCE(json_array_length(json_extract(value,'$.history')), 0)) 
+                SELECT SUM(
+                  CASE 
+                    WHEN json_type(json_extract(value,'$.history')) = 'array' 
+                    THEN COALESCE(json_array_length(json_extract(value,'$.history')), 0)
+                    WHEN json_type(json_extract(value,'$.history')) = 'object'
+                    THEN COALESCE(json_array_length(json_extract(value,'$.history'), '$'), 0)
+                    ELSE 0
+                  END
+                ) 
                 FROM conversations
                 """
                 return try Int.fetchOne(db, sql: sql) ?? 0
@@ -551,7 +589,13 @@ public actor QDBReader {
                   json_extract(h.value,'$.user.created_at')
                 ) AS ts,
                 CAST(((length(h.value)/4.0 + 5.0)/10.0) AS INTEGER)*10 AS tokens
-              FROM filtered c, json_each(c.value,'$.history') h
+              FROM filtered c, json_each(
+                CASE 
+                  WHEN json_type(json_extract(c.value,'$.history')) = 'array' 
+                  THEN json_extract(c.value,'$.history')
+                  ELSE '[]'
+                END
+              ) h
             )
             SELECT model_id,
               SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS day_tokens,

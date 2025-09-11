@@ -19,8 +19,10 @@ public final class SettingsStore: ObservableObject {
 
     // Token limit configuration (placeholder)
     @Published public var sessionTokenLimit: Int = 44_000
+    // Default context window for conversations
+    @Published public var defaultContextWindowTokens: Int = 175_000
     // Cost estimation
-    @Published public var costRatePer1kTokensUSD: Double = 0.0025
+    @Published public var costRatePer1kTokensUSD: Double = 0.0066
     @Published public var costModelName: String = "q-default"
     @Published public var modelPricing: [String: Double] = [:]
 
@@ -58,6 +60,7 @@ public final class SettingsStore: ObservableObject {
                     if let critical = dict["critical_threshold"] as? Int { self.criticalThreshold = critical }
                     if let scheme = dict["color_scheme"] as? String { self.colorScheme = ColorScheme(rawValue: scheme) ?? .auto }
                     if let limit = dict["session_token_limit"] as? Int { self.sessionTokenLimit = limit }
+                    if let defaultCtx = dict["default_context_window_tokens"] as? Int { self.defaultContextWindowTokens = defaultCtx }
                     if let rate = dict["cost_rate_per_1k_tokens_usd"] as? Double { self.costRatePer1kTokensUSD = rate }
                     if let model = dict["cost_model_name"] as? String { self.costModelName = model }
                     if let mp = dict["model_pricing"] as? [String: Any] {
@@ -90,6 +93,7 @@ public final class SettingsStore: ObservableObject {
             "critical_threshold": criticalThreshold,
             "color_scheme": colorScheme.rawValue,
             "session_token_limit": sessionTokenLimit,
+            "default_context_window_tokens": defaultContextWindowTokens,
             "cost_rate_per_1k_tokens_usd": costRatePer1kTokensUSD,
             "cost_model_name": costModelName,
             "model_pricing": modelPricing,
@@ -119,6 +123,7 @@ public final class SettingsStore: ObservableObject {
         if let s = env["QSTATUS_THRESH_HIGH"], let v = Int(s) { highThreshold = v }
         if let s = env["QSTATUS_THRESH_CRIT"], let v = Int(s) { criticalThreshold = v }
         if let s = env["QSTATUS_TOKEN_LIMIT"], let v = Int(s) { sessionTokenLimit = v }
+        if let s = env["QSTATUS_DEFAULT_CTX_WINDOW"], let v = Int(s) { defaultContextWindowTokens = v }
         if let s = env["QSTATUS_COST_RATE_1K"], let v = Double(s) { costRatePer1kTokensUSD = v }
         if let s = env["QSTATUS_COST_MODEL" ] { costModelName = s }
         if let s = env["QSTATUS_GROUP_BY_FOLDER"], let v = Bool(fromString: s) { groupByFolder = v }

@@ -170,7 +170,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
             let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
             // Use 175k base for context usage percent (per Q CLI display)
             let contextBase = 175_000
-            let usage175 = min(100.0, max(0.0, (Double(s.tokensUsed)/Double(contextBase))*100.0))
+            // Cap at 99.9% unless truly at or above limit
+            let rawUsage = (Double(s.tokensUsed)/Double(contextBase))*100.0
+            let usage175 = s.tokensUsed >= contextBase ? 100.0 : min(99.9, max(0.0, rawUsage))
             return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: contextBase, usagePercent: usage175, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
         }
         viewModel.sessions = mapped
@@ -354,7 +356,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         if let details = try? await self.reader.fetchSessionDetail(key: s.id) {
                             let ctxBase = 175_000
                             let tokens = details.summary.tokensUsed
-                            let usage = min(100.0, max(0.0, (Double(tokens)/Double(ctxBase))*100.0))
+                            // Cap at 99.9% unless truly at or above limit
+                            let rawUsage = (Double(tokens)/Double(ctxBase))*100.0
+                            let usage = tokens >= ctxBase ? 100.0 : min(99.9, max(0.0, rawUsage))
                             let cwd = details.summary.cwd
                             let rate = self.settings.modelPricing[details.summary.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
                             let cost = CostEstimator.estimateUSD(tokens: tokens, ratePer1k: rate)

@@ -14,6 +14,8 @@ struct PreferencesWindow: View {
                 .tabItem { Label("Notifications", systemImage: "bell") }
             AppearanceTab(settings: settings)
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
+            AdvancedTab(settings: settings)
+                .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
         }
         .padding()
         .frame(width: 520, height: 380)
@@ -33,6 +35,8 @@ struct PreferencesWindow: View {
         .onChange(of: settings.pinnedSessionKey) { _ in settings.saveToDisk() }
         .onChange(of: settings.showActiveBadge) { _ in settings.saveToDisk() }
         .onChange(of: settings.compactMode) { _ in settings.saveToDisk() }
+        .onChange(of: settings.defaultContextWindowTokens) { _ in settings.saveToDisk() }
+        .onChange(of: settings.costRatePer1kTokensUSD) { _ in settings.saveToDisk() }
     }
 }
 
@@ -100,6 +104,88 @@ private struct AppearanceTab: View {
                 Text("Light").tag(SettingsStore.ColorScheme.light)
                 Text("Dark").tag(SettingsStore.ColorScheme.dark)
             }
+        }
+    }
+}
+
+private struct AdvancedTab: View {
+    @ObservedObject var settings: SettingsStore
+    @State private var contextWindowText: String = ""
+    @State private var costRateText: String = ""
+    
+    private let tokenFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimum = 1000
+        formatter.maximum = 1000000
+        formatter.groupingSeparator = ","
+        formatter.usesGroupingSeparator = true
+        return formatter
+    }()
+    
+    private let costFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 4
+        formatter.maximumFractionDigits = 4
+        formatter.minimum = 0.0001
+        formatter.maximum = 1.0
+        return formatter
+    }()
+    
+    var body: some View {
+        Form {
+            Section(header: Text("Token Limits")) {
+                HStack {
+                    Text("Default Context Window")
+                    Spacer()
+                    TextField("Tokens", value: $settings.defaultContextWindowTokens, formatter: tokenFormatter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+                    Text("tokens")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Default context window size when not specified by the model (default: 175,000)")
+                
+                HStack {
+                    Text("Session Warning Limit")
+                    Spacer()
+                    TextField("Tokens", value: $settings.sessionTokenLimit, formatter: tokenFormatter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+                    Text("tokens")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Token limit for session health warnings (default: 44,000)")
+            }
+            
+            Section(header: Text("Cost Estimation")) {
+                HStack {
+                    Text("Cost per 1K Tokens")
+                    Spacer()
+                    Text("$")
+                        .foregroundStyle(.secondary)
+                    TextField("0.0066", value: $settings.costRatePer1kTokensUSD, formatter: costFormatter)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                    Text("USD")
+                        .foregroundStyle(.secondary)
+                }
+                .help("Cost per 1,000 tokens in USD (default: $0.0066)")
+                
+                HStack {
+                    Text("Model Name")
+                    Spacer()
+                    TextField("Model", text: $settings.costModelName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 150)
+                }
+                .help("Name of the cost model for display purposes")
+            }
+            
+            Text("These settings apply to new sessions and calculations")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
