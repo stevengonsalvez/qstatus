@@ -215,7 +215,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
         do {
             let count = try await reader.sessionCount(activeOnly: false)
             let offset = page * pageSize
-            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset, groupByFolder: self.settings.groupByFolder, activeOnly: false)
+            // For all sessions view, never group by folder - show individual sessions
+            let sessions = try await reader.fetchSessions(limit: pageSize, offset: offset, groupByFolder: false, activeOnly: false)
             // compute costs for allSessions
             let costMapped = sessions.map { s -> SessionSummary in
                 let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD

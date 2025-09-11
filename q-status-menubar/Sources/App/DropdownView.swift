@@ -210,15 +210,21 @@ struct DropdownView: View {
                         Spacer()
                         Picker("Sort", selection: $topSort) {
                             Text("Tokens").tag(TopSort.tokens)
+                                .help("Sort by total tokens used")
                             Text("Usage").tag(TopSort.usage)
+                                .help("Sort by context usage percentage")
                             Text("Cost").tag(TopSort.cost)
+                                .help("Sort by cost in USD")
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 200)
                     }
                     VStack(spacing: 6) {
-                        ForEach(topSortedGlobalTop().prefix(5), id: \.id) { s in
+                        // Force re-render by including topSort in the ForEach
+                        let sorted = topSortedGlobalTop().prefix(5)
+                        ForEach(Array(sorted.enumerated()), id: \.element.id) { index, s in
                             TopSessionRow(session: s, onSelect: { viewModel.onSelectSession?(s) })
+                                .id("\(s.id)-\(topSort.rawValue)") // Unique ID per sort mode
                         }
                     }
                     HStack {
@@ -342,10 +348,29 @@ extension DropdownView {
         return String(format: "%.0f", p)
     }
     fileprivate func topSortedGlobalTop() -> [SessionSummary] {
+        // Sort with stable secondary sort by rowID for consistency
         switch topSort {
-        case .tokens: return viewModel.globalTop.sorted { $0.tokensUsed > $1.tokensUsed }
-        case .usage: return viewModel.globalTop.sorted { $0.usagePercent > $1.usagePercent }
-        case .cost: return viewModel.globalTop.sorted { $0.costUSD > $1.costUSD }
+        case .tokens: 
+            return viewModel.globalTop.sorted { 
+                if $0.tokensUsed != $1.tokensUsed {
+                    return $0.tokensUsed > $1.tokensUsed
+                }
+                return ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0)
+            }
+        case .usage: 
+            return viewModel.globalTop.sorted { 
+                if $0.usagePercent != $1.usagePercent {
+                    return $0.usagePercent > $1.usagePercent
+                }
+                return ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0)
+            }
+        case .cost: 
+            return viewModel.globalTop.sorted { 
+                if $0.costUSD != $1.costUSD {
+                    return $0.costUSD > $1.costUSD
+                }
+                return ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0)
+            }
         }
     }
     fileprivate func shortId(_ id: String) -> String { id.count > 10 ? String(id.prefix(8)) + "…" : id }
@@ -576,16 +601,29 @@ struct SessionRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                if let cwd = session.cwd, !cwd.isEmpty {
-                    HStack(spacing: 4) {
+                // Always show something - either folder name or session ID
+                HStack(spacing: 4) {
+                    if let cwd = session.cwd, !cwd.isEmpty {
                         Image(systemName: "folder")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text(cwdTail(cwd))
-                            .truncationMode(.head)
+                        Text(folderName(cwd))
+                            .truncationMode(.tail)
+                            .lineLimit(1)
                             .help(cwd)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                    } else {
+                        // Show session ID - if it looks like a path, extract folder name
+                        let displayName = session.id.contains("/") ? folderName(session.id) : shortId(session.id)
+                        Image(systemName: session.id.contains("/") ? "folder" : "doc.text")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        Text(displayName)
+                            .truncationMode(.tail)
+                            .help("Session: \(session.id)")
+                            .font(.caption)
+                            .foregroundStyle(.primary)
                     }
                 }
             }
@@ -617,6 +655,11 @@ struct SessionRow: View {
     }
     private func shortId(_ id: String) -> String { id.count > 10 ? String(id.prefix(8)) + "…" : id }
     private func cwdTail(_ p: String) -> String { (p as NSString).lastPathComponent }
+    private func folderName(_ p: String) -> String {
+        // Extract just the last folder component for display
+        let comps = p.split(separator: "/").filter { !$0.isEmpty }
+        return comps.last.map(String.init) ?? p
+    }
     private func formatTokens(_ t: Int) -> String {
         if t >= 1000 { return "\(t/1000)k" } else { return "\(t)" }
     }

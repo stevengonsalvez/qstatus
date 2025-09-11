@@ -231,7 +231,13 @@ public actor QDBReader {
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
                     }
-                    return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
+                    // Sort grouped sessions by last activity or tokens since internalRowID is nil for groups
+                    return agg.sorted { 
+                        if let a = $0.lastActivity, let b = $1.lastActivity {
+                            return a > b
+                        }
+                        return $0.tokensUsed > $1.tokensUsed
+                    }
                 }
                 return filtered
             }
@@ -264,7 +270,13 @@ public actor QDBReader {
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
                     }
-                    return agg.sorted { ($0.internalRowID ?? 0) > ($1.internalRowID ?? 0) }
+                    // Sort grouped sessions by last activity or tokens since internalRowID is nil for groups
+                    return agg.sorted { 
+                        if let a = $0.lastActivity, let b = $1.lastActivity {
+                            return a > b
+                        }
+                        return $0.tokensUsed > $1.tokensUsed
+                    }
                 }
                 return filtered
             }
