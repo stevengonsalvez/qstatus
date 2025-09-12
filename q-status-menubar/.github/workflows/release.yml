@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        
+    - name: Build CLI
+      run: |
+        cd q-status-cli
+        cargo build --release
+        
+    - name: Build Menubar App
+      run: |
+        cd q-status-menubar
+        swift build -c release
+        
+    - name: Create App Bundle
+      run: |
+        cd q-status-menubar
+        make package-menubar
+        
+    - name: Create DMG
+      run: |
+        cd q-status-menubar
+        make dmg
+        
+    - name: Package Release Assets
+      run: |
+        cd q-status-menubar
+        mkdir -p releases
+        # Package CLI
+        tar -czf releases/q-status-cli-macos.tar.gz -C ../q-status-cli/target/release q-status-cli
+        # Package menubar app
+        zip -r releases/QStatus.app.zip QStatus.app
+        # Copy DMG
+        cp QStatus.dmg releases/
+        # Copy install script
+        cp install.sh releases/
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          q-status-menubar/releases/q-status-cli-macos.tar.gz
+          q-status-menubar/releases/QStatus.app.zip
+          q-status-menubar/releases/QStatus.dmg
+          q-status-menubar/releases/install.sh
+        body: |
+          ## Installation
+          
+          ### Quick Install
+          ```bash
+          curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash
+          ```
+          
+          ### Manual Install
+          1. Download `QStatus.dmg`
+          2. Open and drag to Applications
+          3. Launch from Applications or Spotlight
+          
+          ### CLI Only
+          1. Download `q-status-cli-macos.tar.gz`
+          2. Extract and move to `/usr/local/bin`
+          
+          ## Changes
+          See [CHANGELOG.md](CHANGELOG.md) for details.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
