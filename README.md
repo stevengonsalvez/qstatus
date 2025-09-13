@@ -95,14 +95,14 @@ make install-menubar  # Menubar app only
 <img src="docs/screenshots/tui.png" width="350" align="right">
 
 ```bash
-# Run the dashboard
-qstatus-cli -i
+# Run the dashboard (interactive TUI by default)
+qstatus
 
-# Quick status check
-qstatus-cli
+# With custom refresh rate
+qstatus --refresh-rate 5
 
-# JSON output for scripts
-qstatus-cli --json
+# Enable debug logging
+qstatus --debug
 ```
 
 **Features:**
