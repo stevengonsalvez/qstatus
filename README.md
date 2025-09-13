@@ -1,6 +1,6 @@
 # QStatus Monitor 🚀
 
-Real-time monitoring for your Q (Claude) usage with native macOS menubar app and CLI dashboard.
+Real-time monitoring for your Amazon Q Developer usage with native macOS menubar app and CLI dashboard.
 
 <p align="center">
   <img src="docs/screenshots/menu.png" width="400" alt="QStatus Menubar">
@@ -27,11 +27,11 @@ Real-time monitoring for your Q (Claude) usage with native macOS menubar app and
 
 ## 📦 Installation
 
-### Homebrew (Easiest)
+### Homebrew (Coming Soon)
 
 ```bash
 # Add the tap
-brew tap yourusername/qstatus
+brew tap stevengonsalvez/qstatus
 
 # Install CLI tool
 brew install qstatus-cli
@@ -44,12 +44,12 @@ brew install --cask qstatus-menu
 
 ```bash
 # Download and run the installer
-curl -sSL https://github.com/yourusername/qstatus/releases/latest/download/install.sh | bash
+curl -sSL https://github.com/stevengonsalvez/qstatus/releases/latest/download/install.sh | bash
 ```
 
 ### Install from Release
 
-1. Download the latest release from [Releases](https://github.com/yourusername/qstatus/releases)
+1. Download the latest release from [Releases](https://github.com/stevengonsalvez/qstatus/releases)
 2. Open `QStatus.dmg`
 3. Drag **QStatus** to your Applications folder
 4. Launch from Applications or Spotlight
@@ -58,7 +58,7 @@ curl -sSL https://github.com/yourusername/qstatus/releases/latest/download/insta
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/qstatus.git
+git clone https://github.com/stevengonsalvez/qstatus.git
 cd qstatus
 
 # Install both apps (from qstatus-menu directory)
@@ -121,9 +121,9 @@ qstatus-cli --json
 - **Compact Mode**: Toggle detailed view elements
 
 ### Database Location
-Both apps read from Q's SQLite database:
+Both apps read from Amazon Q's SQLite database:
 ```
-~/Library/Application Support/Claude/claude_desktop_storage.db
+~/Library/Application Support/amazon-q/data.sqlite3
 ```
 
 ## 🛠️ Development
@@ -183,7 +183,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 - Menubar app requires accessibility permissions on first launch
 - CLI requires `/usr/local/bin` in PATH
-- Database path may vary based on Q installation method
+- Database path may vary based on Amazon Q installation method
 
 ## 📊 Screenshots
 
@@ -199,30 +199,30 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🙏 Acknowledgments
 
-- Built for the Q (Claude) community
+- Built for the Amazon Q Developer community
 - Inspired by the need for better usage visibility
 - Thanks to all contributors and testers
 
 ## 📮 Support
 
 For issues, questions, or suggestions:
-- [Open an issue](https://github.com/yourusername/qstatus/issues)
-- [Discussions](https://github.com/yourusername/qstatus/discussions)
+- [Open an issue](https://github.com/stevengonsalvez/qstatus/issues)
+- [Discussions](https://github.com/stevengonsalvez/qstatus/discussions)
 
 ---
 
 <p align="center">
-  Made with ❤️ for developers using Q (Claude)
+  Made with ❤️ for developers using Amazon Q Developer
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/qstatus/releases">
-    <img src="https://img.shields.io/github/v/release/yourusername/qstatus?style=flat-square" alt="Latest Release">
+  <a href="https://github.com/stevengonsalvez/qstatus/releases">
+    <img src="https://img.shields.io/github/v/release/stevengonsalvez/qstatus?style=flat-square" alt="Latest Release">
   </a>
-  <a href="https://github.com/yourusername/qstatus/blob/main/LICENSE">
+  <a href="https://github.com/stevengonsalvez/qstatus/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License">
   </a>
-  <a href="https://github.com/yourusername/qstatus/stargazers">
-    <img src="https://img.shields.io/github/stars/yourusername/qstatus?style=flat-square" alt="Stars">
+  <a href="https://github.com/stevengonsalvez/qstatus/stargazers">
+    <img src="https://img.shields.io/github/stars/stevengonsalvez/qstatus?style=flat-square" alt="Stars">
   </a>
 </p>
