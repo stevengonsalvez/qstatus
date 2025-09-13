@@ -1,5 +1,5 @@
-# Q-Status Build and Installation Makefile
-# ABOUTME: Unified build system for q-status-cli and q-status-menubar
+# QStatus Build and Installation Makefile
+# ABOUTME: Unified build system for qstatus-cli and qstatus-menu
 # Provides easy commands for building, installing, and packaging both apps
 
 .PHONY: all build-cli build-menubar install-cli install-menubar clean release help
@@ -9,22 +9,22 @@ all: build-cli build-menubar
 
 # Build the Rust CLI app
 build-cli:
-	@echo "Building q-status-cli..."
+	@echo "Building qstatus-cli..."
 	cd ../q-status-cli && cargo build --release
 	@echo "✅ CLI built successfully"
 
 # Build the Swift menubar app
 build-menubar:
-	@echo "Building q-status-menubar..."
+	@echo "Building qstatus-menu..."
 	swift build -c release
 	@echo "✅ Menubar app built successfully"
 
 # Install CLI to /usr/local/bin
 install-cli: build-cli
-	@echo "Installing q-status-cli to /usr/local/bin..."
-	@sudo cp ../q-status-cli/target/release/q-status-cli /usr/local/bin/q-status
-	@sudo chmod +x /usr/local/bin/q-status
-	@echo "✅ CLI installed as 'q-status'"
+	@echo "Installing qstatus-cli to /usr/local/bin..."
+	@sudo cp ../q-status-cli/target/release/q-status /usr/local/bin/qstatus
+	@sudo chmod +x /usr/local/bin/qstatus
+	@echo "✅ CLI installed as 'qstatus'"
 
 # Build and package menubar app as a macOS .app bundle
 package-menubar: build-menubar
@@ -87,14 +87,14 @@ release: build-cli package-menubar
 	@echo "Creating release packages..."
 	@mkdir -p releases
 	# Package CLI as tar.gz
-	@tar -czf releases/q-status-cli-macos.tar.gz -C ../q-status-cli/target/release q-status-cli
+	@tar -czf releases/qstatus-cli-macos.tar.gz -C ../q-status-cli/target/release q-status
 	# Package menubar app as zip
 	@zip -r releases/QStatus.app.zip QStatus.app
 	# Create DMG
 	@make dmg
 	@mv QStatus.dmg releases/
 	@echo "✅ Release packages created in releases/"
-	@echo "  - q-status-cli-macos.tar.gz"
+	@echo "  - qstatus-cli-macos.tar.gz"
 	@echo "  - QStatus.app.zip"
 	@echo "  - QStatus.dmg"
 
@@ -110,7 +110,7 @@ clean:
 
 # Show help
 help:
-	@echo "Q-Status Build System"
+	@echo "QStatus Build System"
 	@echo ""
 	@echo "Quick Install:"
 	@echo "  make install         - Build and install both apps"

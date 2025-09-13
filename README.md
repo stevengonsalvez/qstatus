@@ -1,10 +1,10 @@
-# Q-Status Monitor 🚀
+# QStatus Monitor 🚀
 
 Real-time monitoring for your Q (Claude) usage with native macOS menubar app and CLI dashboard.
 
 <p align="center">
-  <img src="docs/screenshots/menu.png" width="400" alt="Q-Status Menubar">
-  <img src="docs/screenshots/tui.png" width="400" alt="Q-Status CLI">
+  <img src="docs/screenshots/menu.png" width="400" alt="QStatus Menubar">
+  <img src="docs/screenshots/tui.png" width="400" alt="QStatus CLI">
 </p>
 
 ## ✨ Features
@@ -27,29 +27,42 @@ Real-time monitoring for your Q (Claude) usage with native macOS menubar app and
 
 ## 📦 Installation
 
-### Quick Install (Recommended)
+### Homebrew (Easiest)
+
+```bash
+# Add the tap
+brew tap yourusername/qstatus
+
+# Install CLI tool
+brew install qstatus-cli
+
+# Install Menubar app
+brew install --cask qstatus-menu
+```
+
+### Quick Install Script
 
 ```bash
 # Download and run the installer
-curl -sSL https://github.com/yourusername/q-status/releases/latest/download/install.sh | bash
+curl -sSL https://github.com/yourusername/qstatus/releases/latest/download/install.sh | bash
 ```
 
 ### Install from Release
 
-1. Download the latest release from [Releases](https://github.com/yourusername/q-status/releases)
+1. Download the latest release from [Releases](https://github.com/yourusername/qstatus/releases)
 2. Open `QStatus.dmg`
-3. Drag **Q Status** to your Applications folder
+3. Drag **QStatus** to your Applications folder
 4. Launch from Applications or Spotlight
 
 ### Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/q-status.git
-cd q-status
+git clone https://github.com/yourusername/qstatus.git
+cd qstatus
 
-# Install both apps (from q-status-menubar directory)
-cd q-status-menubar && make install
+# Install both apps (from qstatus-menu directory)
+cd qstatus-menu && make install
 
 # Or install individually
 make install-cli      # CLI only
@@ -62,7 +75,7 @@ make install-menubar  # Menubar app only
 
 <img src="docs/screenshots/menu.png" width="350" align="right">
 
-1. Launch **Q Status** from Applications
+1. Launch **QStatus** from Applications
 2. Click the menubar icon to see:
    - **Overall stats**: Sessions, tokens, costs
    - **Recent sessions**: Visual progress bars
@@ -83,13 +96,13 @@ make install-menubar  # Menubar app only
 
 ```bash
 # Run the dashboard
-q-status -i
+qstatus-cli -i
 
 # Quick status check
-q-status
+qstatus-cli
 
 # JSON output for scripts
-q-status --json
+qstatus-cli --json
 ```
 
 **Features:**
@@ -123,11 +136,11 @@ Both apps read from Q's SQLite database:
 
 ### Project Structure
 ```
-q-status/
-├── q-status-cli/        # Rust CLI application
+qstatus/
+├── qstatus-cli/        # Rust CLI application
 │   ├── src/
 │   └── Cargo.toml
-├── q-status-menubar/    # Swift menubar application
+├── qstatus-menu/    # Swift menubar application
 │   ├── Sources/
 │   ├── Package.swift
 │   └── Makefile
@@ -139,8 +152,8 @@ q-status/
 ### Building
 
 ```bash
-# From q-status-menubar directory
-cd q-status-menubar
+# From qstatus-menu directory
+cd qstatus-menu
 
 # Build everything
 make all
@@ -193,8 +206,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📮 Support
 
 For issues, questions, or suggestions:
-- [Open an issue](https://github.com/yourusername/q-status/issues)
-- [Discussions](https://github.com/yourusername/q-status/discussions)
+- [Open an issue](https://github.com/yourusername/qstatus/issues)
+- [Discussions](https://github.com/yourusername/qstatus/discussions)
 
 ---
 
@@ -203,13 +216,13 @@ For issues, questions, or suggestions:
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/q-status/releases">
-    <img src="https://img.shields.io/github/v/release/yourusername/q-status?style=flat-square" alt="Latest Release">
+  <a href="https://github.com/yourusername/qstatus/releases">
+    <img src="https://img.shields.io/github/v/release/yourusername/qstatus?style=flat-square" alt="Latest Release">
   </a>
-  <a href="https://github.com/yourusername/q-status/blob/main/LICENSE">
+  <a href="https://github.com/yourusername/qstatus/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License">
   </a>
-  <a href="https://github.com/yourusername/q-status/stargazers">
-    <img src="https://img.shields.io/github/stars/yourusername/q-status?style=flat-square" alt="Stars">
+  <a href="https://github.com/yourusername/qstatus/stargazers">
+    <img src="https://img.shields.io/github/stars/yourusername/qstatus?style=flat-square" alt="Stars">
   </a>
 </p>

@@ -1,6 +1,6 @@
 # Distribution Guide
 
-This guide explains how to distribute Q-Status from your GitHub repository.
+This guide explains how to distribute QStatus from your GitHub repository.
 
 ## 📦 Creating a Release
 
@@ -11,7 +11,7 @@ This guide explains how to distribute Q-Status from your GitHub repository.
 make release
 
 # This creates in the releases/ directory:
-# - q-status-cli-macos.tar.gz (CLI binary)
+# - qstatus-cli-macos.tar.gz (CLI binary)
 # - QStatus.app.zip (Menubar app)
 # - QStatus.dmg (Installer disk image)
 ```
@@ -26,7 +26,7 @@ make release
 4. Upload the files from `releases/` directory:
    - `QStatus.dmg` - Main installer for most users
    - `QStatus.app.zip` - Direct app download
-   - `q-status-cli-macos.tar.gz` - CLI only
+   - `qstatus-cli-macos.tar.gz` - CLI only
    - `install.sh` - Installation script
 5. Add release notes
 
@@ -46,14 +46,14 @@ git push origin v1.0.0
 
 Users can download directly from your releases page:
 ```
-https://github.com/yourusername/q-status/releases
+https://github.com/yourusername/qstatus/releases
 ```
 
 ### Option 2: Install Script
 
 Users can install with one command:
 ```bash
-curl -sSL https://github.com/yourusername/q-status/releases/latest/download/install.sh | bash
+curl -sSL https://github.com/yourusername/qstatus/releases/latest/download/install.sh | bash
 ```
 
 ### Option 3: DMG Installer
@@ -68,8 +68,8 @@ Most user-friendly option:
 Before creating a release:
 
 - [ ] Update version numbers in:
-  - [ ] `q-status-cli/Cargo.toml`
-  - [ ] `q-status-menubar/Package.swift`
+  - [ ] `qstatus-cli/Cargo.toml`
+  - [ ] `qstatus-menubar/Package.swift`
   - [ ] `Makefile` (CFBundleVersion)
 - [ ] Test both apps thoroughly
 - [ ] Update CHANGELOG.md
@@ -118,7 +118,7 @@ xcrun stapler staple QStatus.app
 Add this to your README or release notes:
 
 ### For Most Users (DMG):
-1. Download `QStatus.dmg` from [Releases](https://github.com/yourusername/q-status/releases)
+1. Download `QStatus.dmg` from [Releases](https://github.com/yourusername/qstatus/releases)
 2. Open the DMG file
 3. Drag Q Status to Applications
 4. Launch from Applications or Spotlight
@@ -127,15 +127,15 @@ Add this to your README or release notes:
 ### For Power Users (Direct):
 ```bash
 # Quick install
-curl -sSL https://github.com/yourusername/q-status/releases/latest/download/install.sh | bash
+curl -sSL https://github.com/yourusername/qstatus/releases/latest/download/install.sh | bash
 ```
 
 ### For CLI Only:
 ```bash
 # Download and extract
-curl -L https://github.com/yourusername/q-status/releases/latest/download/q-status-cli-macos.tar.gz | tar xz
+curl -L https://github.com/yourusername/qstatus/releases/latest/download/qstatus-cli-macos.tar.gz | tar xz
 # Move to PATH
-sudo mv q-status-cli /usr/local/bin/q-status
+sudo mv qstatus-cli /usr/local/bin/qstatus
 ```
 
 ## 🚀 Homebrew Distribution (Future)
@@ -146,19 +146,19 @@ To distribute via Homebrew:
 ```ruby
 class QStatus < Formula
   desc "Real-time monitoring for Q (Claude) usage"
-  homepage "https://github.com/yourusername/q-status"
-  url "https://github.com/yourusername/q-status/releases/download/v1.0.0/q-status-cli-macos.tar.gz"
+  homepage "https://github.com/yourusername/qstatus"
+  url "https://github.com/yourusername/qstatus/releases/download/v1.0.0/qstatus-cli-macos.tar.gz"
   sha256 "HASH_HERE"
   version "1.0.0"
 
   def install
-    bin.install "q-status-cli" => "q-status"
+    bin.install "qstatus-cli" => "qstatus"
   end
 
   caveats do
     <<~EOS
       For the menubar app, download from:
-      https://github.com/yourusername/q-status/releases
+      https://github.com/yourusername/qstatus/releases
     EOS
   end
 end
@@ -170,7 +170,7 @@ end
 
 Track downloads using GitHub API:
 ```bash
-curl -s https://api.github.com/repos/yourusername/q-status/releases/latest \
+curl -s https://api.github.com/repos/yourusername/qstatus/releases/latest \
   | jq '.assets[] | {name: .name, downloads: .download_count}'
 ```
 

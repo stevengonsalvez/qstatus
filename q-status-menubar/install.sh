@@ -1,5 +1,5 @@
 #!/bin/bash
-# ABOUTME: One-click installer script for Q-Status apps
+# ABOUTME: One-click installer script for QStatus apps
 # Downloads, builds, and installs both the CLI and menubar apps
 
 set -e
@@ -10,7 +10,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}Q-Status Installer${NC}"
+echo -e "${BLUE}QStatus Installer${NC}"
 echo "===================="
 echo ""
 
@@ -46,8 +46,8 @@ install_local() {
     echo -e "${GREEN}✅ Installation complete!${NC}"
     echo ""
     echo "Usage:"
-    echo "  CLI: Run 'q-status' in your terminal"
-    echo "  Menubar: Launch 'Q Status' from Applications or Spotlight"
+    echo "  CLI: Run 'qstatus-cli' in your terminal"
+    echo "  Menubar: Launch 'QStatus Menu' from Applications or Spotlight"
 }
 
 # Install from GitHub
@@ -58,8 +58,8 @@ install_from_github() {
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
     
-    git clone https://github.com/yourusername/q-status.git
-    cd q-status/q-status-menubar
+    git clone https://github.com/yourusername/qstatus.git
+    cd qstatus/q-status-menubar
     
     # Build and install
     make install
@@ -72,8 +72,8 @@ install_from_github() {
     echo -e "${GREEN}✅ Installation complete!${NC}"
     echo ""
     echo "Usage:"
-    echo "  CLI: Run 'q-status' in your terminal"
-    echo "  Menubar: Launch 'Q Status' from Applications or Spotlight"
+    echo "  CLI: Run 'qstatus-cli' in your terminal"
+    echo "  Menubar: Launch 'QStatus Menu' from Applications or Spotlight"
 }
 
 # Main installation flow
@@ -89,18 +89,18 @@ main() {
         if [[ "$response" == "y" ]]; then
             install_from_github
         else
-            echo "Please run this script from the q-status project directory"
+            echo "Please run this script from the qstatus project directory"
             exit 1
         fi
     fi
     
     # Ask to launch menubar app
     echo ""
-    echo "Launch Q Status menubar app now? (y/n)"
+    echo "Launch QStatus Menu app now? (y/n)"
     read -r response
     if [[ "$response" == "y" ]]; then
-        open "/Applications/Q Status.app"
-        echo -e "${GREEN}✅ Q Status is running in your menubar!${NC}"
+        open "/Applications/QStatus Menu.app"
+        echo -e "${GREEN}✅ QStatus Menu is running in your menubar!${NC}"
     fi
 }
 
