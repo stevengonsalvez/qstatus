@@ -33,6 +33,7 @@ package-menubar: build-menubar
 	@mkdir -p QStatus.app/Contents/MacOS
 	@mkdir -p QStatus.app/Contents/Resources
 	@cp .build/release/QStatusMenubar QStatus.app/Contents/MacOS/QStatus
+	@if [ -f QStatus.icns ]; then cp QStatus.icns QStatus.app/Contents/Resources/; fi
 	@echo '<?xml version="1.0" encoding="UTF-8"?>' > QStatus.app/Contents/Info.plist
 	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> QStatus.app/Contents/Info.plist
 	@echo '<plist version="1.0">' >> QStatus.app/Contents/Info.plist
@@ -55,6 +56,8 @@ package-menubar: build-menubar
 	@echo '    <true/>' >> QStatus.app/Contents/Info.plist
 	@echo '    <key>NSHighResolutionCapable</key>' >> QStatus.app/Contents/Info.plist
 	@echo '    <true/>' >> QStatus.app/Contents/Info.plist
+	@echo '    <key>CFBundleIconFile</key>' >> QStatus.app/Contents/Info.plist
+	@echo '    <string>QStatus.icns</string>' >> QStatus.app/Contents/Info.plist
 	@echo '</dict>' >> QStatus.app/Contents/Info.plist
 	@echo '</plist>' >> QStatus.app/Contents/Info.plist
 	@echo "✅ App bundle created: QStatus.app"
