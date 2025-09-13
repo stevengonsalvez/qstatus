@@ -27,7 +27,7 @@ Real-time monitoring for your Amazon Q Developer usage with native macOS menubar
 
 ## 📦 Installation
 
-### Homebrew (Coming Soon)
+### Homebrew (Easiest)
 
 ```bash
 # Add the tap
