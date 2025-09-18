@@ -1,7 +1,8 @@
 import Foundation
+import AppKit
 
 public final class UpdateCoordinator: @unchecked Sendable {
-    public let reader: QDBReader
+    public var reader: any DataSource
     public let metrics: MetricsCalculator
     public let settings: SettingsStore
 
@@ -9,11 +10,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
     public let viewModel: UsageViewModel
 
     private var timerTask: Task<Void, Never>?
+    private var isRunning = false
     private var history: [UsageSnapshot] = []
     private var lastDataVersion: Int = -1
     private var stableCycles: Int = 0
     private var sessionsPage: Int = 0
     private let pageSize: Int = 50
+    // Active Claude Code session tracking
+    private var activeClaudeSession: ActiveSessionData?
     // Compaction heuristics
     private var lastSessionMetrics: [String: (tokens: Int, messages: Int, usage: Double)] = [:]
     private var compactingUntil: [String: Date] = [:]
@@ -23,7 +27,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private var emaTokensPerMinute: Double = 0
     private let emaAlpha: Double = 0.3
 
-    public init(reader: QDBReader, metrics: MetricsCalculator, settings: SettingsStore) {
+    public init(reader: any DataSource, metrics: MetricsCalculator, settings: SettingsStore) {
         self.reader = reader
         self.metrics = metrics
         self.settings = settings
@@ -54,9 +58,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
 
     public func start() {
         timerTask?.cancel()
+        isRunning = true
         timerTask = Task.detached { [weak self] in
             guard let self else { return }
-            while !Task.isCancelled {
+            while !Task.isCancelled && self.isRunning {
                 do {
                     // Check for changes cheaply
                     let dv = try await self.reader.dataVersion()
@@ -71,6 +76,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         }
                         // Refresh global totals (aggregated across all sessions)
                         await self.refreshGlobalTotals()
+                        // Refresh active Claude Code session if applicable
+                        await self.refreshActiveClaudeSession()
                     } else {
                         self.stableCycles += 1
                     }
@@ -96,8 +103,48 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     await self.applySessions(sessions)
                 }
                 await self.refreshGlobalTotals()
+                await self.refreshActiveClaudeSession()
             } catch { /* ignore */ }
         }
+    }
+
+    public func stop() {
+        isRunning = false
+        timerTask?.cancel()
+        timerTask = nil
+    }
+
+    public func restart(with newDataSource: any DataSource) async {
+        // Stop current polling
+        stop()
+
+        // Clear cached data to force fresh fetch
+        lastDataVersion = -1
+        stableCycles = 0
+        history = []
+        lastSessionMetrics = [:]
+        compactingUntil = [:]
+        lastGlobalTokens = 0
+        lastGlobalRateAt = .distantPast
+        emaTokensPerMinute = 0
+
+        // Update the data source
+        reader = newDataSource
+
+        // Clear view model state
+        await MainActor.run {
+            viewModel.sessions = []
+            viewModel.globalTop = []
+            viewModel.sessionCategoryTokens = [:]
+            viewModel._lastGlobalTotalTokens = nil
+            viewModel._lastTotalsDate = nil
+        }
+
+        // Start polling with new data source
+        start()
+
+        // Force immediate refresh
+        manualRefresh()
     }
 
     deinit { timerTask?.cancel() }
@@ -241,13 +288,19 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     wCost += CostEstimator.estimateUSD(tokens: row.weekTokens, ratePer1k: rate)
                     mCost += CostEstimator.estimateUSD(tokens: row.monthTokens, ratePer1k: rate)
                 }
+                let finalDTok = dTok
+                let finalWTok = wTok
+                let finalMTok = mTok
+                let finalDCost = dCost
+                let finalWCost = wCost
+                let finalMCost = mCost
                 await MainActor.run {
-                    viewModel.sheetTokensDay = dTok
-                    viewModel.sheetTokensWeek = wTok
-                    viewModel.sheetTokensMonth = mTok
-                    viewModel.sheetCostDay = dCost
-                    viewModel.sheetCostWeek = wCost
-                    viewModel.sheetCostMonth = mCost
+                    viewModel.sheetTokensDay = finalDTok
+                    viewModel.sheetTokensWeek = finalWTok
+                    viewModel.sheetTokensMonth = finalMTok
+                    viewModel.sheetCostDay = finalDCost
+                    viewModel.sheetCostWeek = finalWCost
+                    viewModel.sheetCostMonth = finalMCost
                 }
             }
         } catch {
@@ -269,10 +322,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
                 totalCost += CostEstimator.estimateUSD(tokens: row.tokens, ratePer1k: rate)
             }
+            let finalTotalTokens = totalTokens
+            let finalTotalMessages = totalMessages
+            let finalTotalCost = totalCost
             await MainActor.run {
-                viewModel.globalTokens = totalTokens
-                viewModel.globalMessages = totalMessages
-                viewModel.globalCost = totalCost
+                viewModel.globalTokens = finalTotalTokens
+                viewModel.globalMessages = finalTotalMessages
+                viewModel.globalCost = finalTotalCost
                 viewModel.globalSessions = global.totalSessions
                 viewModel.globalNearLimit = global.sessionsNearLimit
                 viewModel.globalTop = global.topHeavySessions
@@ -281,30 +337,23 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 if lastGlobalRateAt != .distantPast {
                     let dt = now.timeIntervalSince(lastGlobalRateAt)
                     if dt > 0 {
-                        let dTokens = max(0, totalTokens - lastGlobalTokens)
+                        let dTokens = max(0, finalTotalTokens - lastGlobalTokens)
                         let instPerMin = (Double(dTokens) / dt) * 60.0
                         emaTokensPerMinute = emaAlpha * instPerMin + (1.0 - emaAlpha) * emaTokensPerMinute
                         viewModel.globalTokensPerMinute = emaTokensPerMinute
                     }
                 }
                 lastGlobalRateAt = now
-                lastGlobalTokens = totalTokens
+                lastGlobalTokens = finalTotalTokens
                 // Snapshot-delta accumulation for Today/Week/Month (approximate)
-                let delta = max(0, totalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
-                viewModel._lastGlobalTotalTokens = totalTokens
+                let delta = max(0, finalTotalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
+                viewModel._lastGlobalTotalTokens = finalTotalTokens
                 let now2 = Date()
                 if Calendar.current.isDateInToday(viewModel._lastTotalsDate ?? now2) == false {
                     viewModel.tokensToday = 0; viewModel.costToday = 0
                     viewModel._lastTotalsDate = now2
                 }
-                viewModel.tokensToday += delta
-                let defaultRate = self.settings.costRatePer1kTokensUSD
-                viewModel.costToday += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
-                // For week/month, accumulate deltas (rolling); refine with JSON1 in a later pass
-                viewModel.tokensWeek += delta
-                viewModel.tokensMonth += delta
-                viewModel.costWeek += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
-                viewModel.costMonth += CostEstimator.estimateUSD(tokens: delta, ratePer1k: defaultRate)
+                // Delta accumulation removed - will get precise values from fetchPeriodTokensByModel
             }
             // Precise day/week/month tokens+messages per model, then cost via pricing
             if let perModel = try? await reader.fetchPeriodTokensByModel() {
@@ -314,19 +363,20 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 var weightedRateNumerator: Double = 0.0
                 var weightedRateDenominator: Int = 0
                 for row in perModel {
-                    let rate = self.settings.modelPricing[row.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
                     dayTok += row.dayTokens; weekTok += row.weekTokens; monthTok += row.monthTokens; yearTok += row.yearTokens
                     dayMsg += row.dayMessages; weekMsg += row.weekMessages; monthMsg += row.monthMessages
-                    dayCost += CostEstimator.estimateUSD(tokens: row.dayTokens, ratePer1k: rate)
-                    weekCost += CostEstimator.estimateUSD(tokens: row.weekTokens, ratePer1k: rate)
-                    monthCost += CostEstimator.estimateUSD(tokens: row.monthTokens, ratePer1k: rate)
-                    yearCost += CostEstimator.estimateUSD(tokens: row.yearTokens, ratePer1k: rate)
+                    // Use costs directly from the data source (already calculated with correct JSONL costs)
+                    dayCost += row.dayCost
+                    weekCost += row.weekCost
+                    monthCost += row.monthCost
+                    yearCost += row.yearCost
                     // Weighted average rate per 1k based on day tokens
+                    let rate = row.dayTokens > 0 ? (row.dayCost * 1000.0 / Double(row.dayTokens)) : self.settings.costRatePer1kTokensUSD
                     weightedRateNumerator += Double(row.dayTokens) * rate
                     weightedRateDenominator += row.dayTokens
                 }
                 let dTok = dayTok, wTok = weekTok, mTok = monthTok, yTok = yearTok
-                let dC = dayCost, wC = weekCost, mC = monthCost, yC = yearCost, mM = monthMsg
+                let dC = dayCost, wC = weekCost, mC = monthCost, yC = yearCost, _ = monthMsg
                 let wrNum = weightedRateNumerator, wrDen = weightedRateDenominator
                 await MainActor.run {
                     viewModel.tokensToday = dTok
@@ -374,6 +424,28 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
             await MainActor.run { viewModel.globalTop = enrichedTop }
         } catch { /* ignore */ }
+    }
+
+    private func refreshActiveClaudeSession() async {
+        // Only fetch active session for Claude Code data source
+        guard settings.dataSourceType == .claudeCode else {
+            await MainActor.run { viewModel.activeClaudeSession = nil }
+            return
+        }
+
+        // Check if reader is ClaudeCodeDataSource and fetch active session
+        if let claudeReader = reader as? ClaudeCodeDataSource {
+            do {
+                let activeSession = try await claudeReader.fetchActiveSession()
+                await MainActor.run {
+                    viewModel.activeClaudeSession = activeSession
+                }
+            } catch {
+                await MainActor.run {
+                    viewModel.activeClaudeSession = nil
+                }
+            }
+        }
     }
 }
 
@@ -439,6 +511,12 @@ public final class UsageViewModel: ObservableObject {
     public var forceRefresh: (() -> Void)? = nil
     // Cached per-session category tokens for stacked bars
     @Published public var sessionCategoryTokens: [String: (history:Int, context:Int, tools:Int, system:Int)] = [:]
+    // Provider switching state
+    @Published public var isSwitchingProvider: Bool = false
+    // Provider switch callback
+    public var onSwitchProvider: ((DataSourceType) async -> Void)? = nil
+    // Active Claude Code session
+    @Published public var activeClaudeSession: ActiveSessionData? = nil
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {
@@ -460,9 +538,37 @@ public final class UsageViewModel: ObservableObject {
         self.estimatedCost = cost
     }
 
-    public func openPreferences() { NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil) }
+    public func openPreferences() {
+        print("[DEBUG] openPreferences called")
+
+        // For menubar-only apps, we need to temporarily change the activation policy
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Now try to open the preferences window
+        if #available(macOS 14, *) {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        } else {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
+
+        // After a delay, restore the menubar-only policy
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if NSApp.windows.filter({ $0.isVisible && !$0.className.contains("NSStatusBarWindow") }).isEmpty {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
+    }
     public func togglePause() { isPaused.toggle() }
     public func quit() { NSApp.terminate(nil) }
+
+    public func switchProvider(to provider: DataSourceType) {
+        Task { @MainActor in
+            isSwitchingProvider = true
+            await onSwitchProvider?(provider)
+            isSwitchingProvider = false
+        }
+    }
 
     private static func formatTTL(_ v: TimeInterval) -> String {
         let mins = Int(v / 60)

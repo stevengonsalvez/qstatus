@@ -19,7 +19,7 @@ public struct QDBConfig: Sendable {
     }
 }
 
-public actor QDBReader {
+public actor QDBReader: DataSource {
     private let config: QDBConfig
     private var dbPool: DatabasePool?
     private let defaultContextWindow: Int
@@ -497,6 +497,64 @@ public actor QDBReader {
         public let dayMessages: Int
         public let weekMessages: Int
         public let monthMessages: Int
+        public let dayCost: Double
+        public let weekCost: Double
+        public let monthCost: Double
+        public let yearCost: Double
+
+        // Backward compatibility initializer without cost fields
+        public init(
+            modelId: String?,
+            dayTokens: Int,
+            weekTokens: Int,
+            monthTokens: Int,
+            yearTokens: Int,
+            dayMessages: Int,
+            weekMessages: Int,
+            monthMessages: Int
+        ) {
+            self.modelId = modelId
+            self.dayTokens = dayTokens
+            self.weekTokens = weekTokens
+            self.monthTokens = monthTokens
+            self.yearTokens = yearTokens
+            self.dayMessages = dayMessages
+            self.weekMessages = weekMessages
+            self.monthMessages = monthMessages
+            self.dayCost = 0.0
+            self.weekCost = 0.0
+            self.monthCost = 0.0
+            self.yearCost = 0.0
+        }
+
+        // Full initializer with cost fields
+        public init(
+            modelId: String?,
+            dayTokens: Int,
+            weekTokens: Int,
+            monthTokens: Int,
+            yearTokens: Int,
+            dayMessages: Int,
+            weekMessages: Int,
+            monthMessages: Int,
+            dayCost: Double,
+            weekCost: Double,
+            monthCost: Double,
+            yearCost: Double
+        ) {
+            self.modelId = modelId
+            self.dayTokens = dayTokens
+            self.weekTokens = weekTokens
+            self.monthTokens = monthTokens
+            self.yearTokens = yearTokens
+            self.dayMessages = dayMessages
+            self.weekMessages = weekMessages
+            self.monthMessages = monthMessages
+            self.dayCost = dayCost
+            self.weekCost = weekCost
+            self.monthCost = monthCost
+            self.yearCost = yearCost
+        }
     }
 
     public func fetchPeriodTokensByModel(now: Date = Date()) async throws -> [PeriodByModel] {
