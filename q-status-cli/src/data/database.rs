@@ -6,7 +6,10 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Local, Duration, TimeZone};
+use async_trait::async_trait;
+use super::datasource::DataSource;
 
 #[derive(Debug, Clone)]
 pub enum CompactionStatus {
@@ -125,7 +128,7 @@ where
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct QConversation {
     pub conversation_id: String,
     #[serde(deserialize_with = "deserialize_history", default)]
@@ -139,9 +142,9 @@ pub struct QConversation {
 }
 
 pub struct QDatabase {
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
     pub db_path: PathBuf,
-    last_data_version: Option<i32>,
+    last_data_version: Arc<Mutex<Option<i32>>>,
 }
 
 impl QDatabase {
@@ -156,9 +159,9 @@ impl QDatabase {
         )?;
 
         Ok(Self {
-            conn,
+            conn: Arc::new(Mutex::new(conn)),
             db_path,
-            last_data_version: None,
+            last_data_version: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -199,24 +202,24 @@ impl QDatabase {
     }
 
     pub fn has_changed(&mut self) -> Result<bool> {
-        let version: i32 = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let version: i32 = conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))?;
 
-        let changed = self
-            .last_data_version
+        let mut last_version = self.last_data_version.lock().unwrap();
+        let changed = last_version
             .map(|last| version != last)
             .unwrap_or(true);
 
-        self.last_data_version = Some(version);
+        *last_version = Some(version);
         Ok(changed)
     }
 
     pub fn get_current_conversation(&self, _cwd: Option<&str>) -> Result<Option<QConversation>> {
         // Get the latest conversation by rowid (most recently modified)
         // This makes it independent of current directory
-        let result: Option<(String, String)> = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let result: Option<(String, String)> = conn
             .query_row(
                 "SELECT key, value FROM conversations ORDER BY rowid DESC LIMIT 1",
                 [],
@@ -296,8 +299,8 @@ impl QDatabase {
     }
 
     pub fn get_all_conversations(&self) -> Result<Vec<(String, QConversation)>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT key, value FROM conversations ORDER BY key")?;
 
         let conversations = stmt
@@ -318,8 +321,8 @@ impl QDatabase {
     }
     
     pub fn get_all_conversation_summaries(&self) -> Result<Vec<ConversationSummary>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT key, value, LENGTH(value) as size FROM conversations ORDER BY size DESC")?;
 
         let mut summaries = Vec::new();
@@ -398,8 +401,8 @@ impl QDatabase {
     }
     
     pub fn get_conversation_by_path(&self, path: &str) -> Result<Option<QConversation>> {
-        let result: Option<String> = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let result: Option<String> = conn
             .query_row(
                 "SELECT value FROM conversations WHERE key = ?1",
                 [path],
@@ -418,8 +421,8 @@ impl QDatabase {
     
     pub fn get_all_sessions(&self, cost_per_1k: f64) -> Result<Vec<Session>> {
         // Query with LENGTH to get data size as proxy for recent activity
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT key, value, LENGTH(value) as size FROM conversations ORDER BY size DESC")?;
 
         let mut sessions = Vec::new();
@@ -547,8 +550,9 @@ impl QDatabase {
     }
     
     pub fn get_directory_activity(&self, directory: &str) -> Result<DirectoryActivity> {
-        let mut stmt = self.conn.prepare("
-            SELECT 
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("
+            SELECT
                 MIN(start_time) as first_time,
                 MAX(start_time) as last_time,
                 COUNT(*) as invocations
@@ -556,19 +560,19 @@ impl QDatabase {
             WHERE cwd = ?1
             AND (command LIKE '%q %' OR command = 'q')
         ")?;
-        
+
         let result = stmt.query_row([directory], |row| {
             let first_timestamp: Option<i64> = row.get(0)?;
             let last_timestamp: Option<i64> = row.get(1)?;
             let invocations: usize = row.get(2)?;
-            
+
             let first_activity = first_timestamp.and_then(|ts| {
                 Local.timestamp_opt(ts, 0).single()
             });
             let last_activity = last_timestamp.and_then(|ts| {
                 Local.timestamp_opt(ts, 0).single()
             });
-            
+
             Ok(DirectoryActivity {
                 directory: directory.to_string(),
                 first_activity,
@@ -576,7 +580,57 @@ impl QDatabase {
                 q_invocations: invocations,
             })
         })?;
-        
+
         Ok(result)
+    }
+}
+
+// Implement DataSource trait for QDatabase
+#[async_trait]
+impl DataSource for QDatabase {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn has_changed(&mut self) -> Result<bool> {
+        // Delegate to the existing synchronous method
+        self.has_changed()
+    }
+
+    async fn get_current_conversation(&self, cwd: Option<&str>) -> Result<Option<QConversation>> {
+        // Delegate to the existing synchronous method
+        self.get_current_conversation(cwd)
+    }
+
+    async fn get_all_conversation_summaries(&self) -> Result<Vec<ConversationSummary>> {
+        // Delegate to the existing synchronous method
+        self.get_all_conversation_summaries()
+    }
+
+    async fn get_all_sessions(&self, cost_per_1k: f64) -> Result<Vec<Session>> {
+        // Delegate to the existing synchronous method
+        self.get_all_sessions(cost_per_1k)
+    }
+
+    async fn get_global_stats(&self, cost_per_1k: f64) -> Result<GlobalStats> {
+        // Delegate to the existing synchronous method
+        self.get_global_stats(cost_per_1k)
+    }
+
+    async fn get_period_metrics(&self, cost_per_1k: f64) -> Result<PeriodMetrics> {
+        // Delegate to the existing synchronous method
+        self.get_period_metrics(cost_per_1k)
+    }
+
+    async fn get_directory_groups(&self, cost_per_1k: f64) -> Result<Vec<DirectoryGroup>> {
+        // Delegate to the existing synchronous method
+        // Note: The existing method is get_sessions_grouped_by_directory
+        self.get_sessions_grouped_by_directory(cost_per_1k)
+    }
+
+    async fn get_token_usage(&self, conversation: &QConversation) -> Result<TokenUsageDetails> {
+        // The existing method returns TokenUsageDetails directly, not Result
+        // We need to wrap it in Ok()
+        Ok(self.get_token_usage(conversation))
     }
 }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct Dashboard {
     state: Arc<AppState>,
     show_help: bool,
+    switching_provider: bool,
 }
 
 impl Dashboard {
@@ -21,6 +22,7 @@ impl Dashboard {
         Self {
             state,
             show_help: false,
+            switching_provider: false,
         }
     }
 
@@ -49,12 +51,18 @@ impl Dashboard {
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let is_connected = *self.state.is_connected.lock().unwrap();
-        let status = if is_connected {
+        let data_source = self.state.get_active_data_source();
+
+        let status = if self.switching_provider {
+            "Switching..."
+        } else if is_connected {
             "Connected"
         } else {
             "Disconnected"
         };
-        let status_color = if is_connected {
+        let status_color = if self.switching_provider {
+            Color::Yellow
+        } else if is_connected {
             Color::Green
         } else {
             Color::Red
@@ -66,6 +74,11 @@ impl Dashboard {
                 Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw(" v0.3.0  ["),
+            Span::styled(
+                data_source.display_name(),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::raw("] ["),
             Span::styled(status, Style::default().fg(status_color)),
             Span::raw("]"),
         ];
@@ -89,19 +102,56 @@ impl Dashboard {
                 self.render_global_overview(frame, area);
             }
             crate::app::state::ViewMode::CurrentDirectory => {
-                // Original layout for latest conversation view
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(6),  // Token usage gauge
-                        Constraint::Length(4),  // Cost analysis
-                        Constraint::Min(10),    // Session details (expanded)
-                    ])
-                    .split(area);
+                let data_source = self.state.get_active_data_source();
 
-                self.render_token_gauge(frame, chunks[0]);
-                self.render_cost_panel(frame, chunks[1]);
-                self.render_usage_info(frame, chunks[2]);
+                // Add active session display for Claude mode
+                if matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+                    if let Some(_session) = self.state.get_active_claude_session() {
+                        // Layout with active session display
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(5),  // Active session
+                                Constraint::Length(6),  // Token usage gauge
+                                Constraint::Length(4),  // Cost analysis
+                                Constraint::Min(10),    // Session details
+                            ])
+                            .split(area);
+
+                        self.render_active_session(frame, chunks[0]);
+                        self.render_token_gauge(frame, chunks[1]);
+                        self.render_cost_panel(frame, chunks[2]);
+                        self.render_usage_info(frame, chunks[3]);
+                    } else {
+                        // No active session - standard layout
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(6),  // Token usage gauge
+                                Constraint::Length(4),  // Cost analysis
+                                Constraint::Min(10),    // Session details
+                            ])
+                            .split(area);
+
+                        self.render_token_gauge(frame, chunks[0]);
+                        self.render_cost_panel(frame, chunks[1]);
+                        self.render_usage_info(frame, chunks[2]);
+                    }
+                } else {
+                    // Non-Claude mode - standard layout
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(6),  // Token usage gauge
+                            Constraint::Length(4),  // Cost analysis
+                            Constraint::Min(10),    // Session details
+                        ])
+                        .split(area);
+
+                    self.render_token_gauge(frame, chunks[0]);
+                    self.render_cost_panel(frame, chunks[1]);
+                    self.render_usage_info(frame, chunks[2]);
+                }
             }
             crate::app::state::ViewMode::ConversationList => {
                 self.render_conversation_list(frame, area);
@@ -119,7 +169,9 @@ impl Dashboard {
         let usage = self.state.token_usage.lock().unwrap();
         let percentage = usage.percentage;  // Already capped in database.rs
         let color = self.get_usage_color(percentage);
-        
+
+        let data_source = self.state.get_active_data_source();
+
         // Get compaction status indicator
         let status_indicator = match usage.compaction_status {
             crate::data::database::CompactionStatus::Safe => "🟢",
@@ -128,15 +180,36 @@ impl Dashboard {
             crate::data::database::CompactionStatus::Imminent => "🔴",
         };
 
-        let title = format!(
-            "Token Usage - 175K Effective Limit {}",
-            status_indicator
-        );
+        // Adjust title based on data source
+        let title = if matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+            let limit = self.state.config.claude_token_limit;
+            format!("Token Usage - {} Limit {}",
+                if limit >= 1_000_000 {
+                    format!("{}M", limit / 1_000_000)
+                } else if limit >= 1_000 {
+                    format!("{}K", limit / 1_000)
+                } else {
+                    format!("{}", limit)
+                },
+                status_indicator
+            )
+        } else {
+            format!("Token Usage - 175K Effective Limit {}", status_indicator)
+        };
 
-        let label = format!(
+        // Add warning emoji if over threshold for Claude
+        let mut label = format!(
             "{} / {} tokens ({:.1}%)",
             usage.used, usage.context_window, percentage
         );
+
+        if matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+            let warning_threshold = self.state.config.claude_warning_threshold * 100.0;
+            if percentage >= warning_threshold {
+                label = format!("⚠️  {} / {} tokens ({:.1}%)",
+                    usage.used, usage.context_window, percentage);
+            }
+        }
 
         let gauge = Gauge::default()
             .block(
@@ -150,6 +223,59 @@ impl Dashboard {
             .label(label);
 
         frame.render_widget(gauge, area);
+    }
+
+    fn render_active_session(&self, frame: &mut Frame, area: Rect) {
+        let data_source = self.state.get_active_data_source();
+
+        if !matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+            return;
+        }
+
+        if let Some(session) = self.state.get_active_claude_session() {
+            let duration = (session.end_time - session.start_time).num_minutes();
+
+            // Get context tokens (current memory) and total tokens (cumulative)
+            let context_tokens = session.context_tokens.as_ref()
+                .map(|ct| ct.total())
+                .unwrap_or_else(|| session.total_tokens.total());
+            let cumulative_tokens = session.total_tokens.total();
+
+            // Show actual cost from cost_usd when available
+            let cost_text = if session.cost_breakdown.percent_actual > 0.0 {
+                format!("${:.4} ({}% actual)", session.total_cost, session.cost_breakdown.percent_actual as u32)
+            } else {
+                format!("${:.4} (estimated)", session.total_cost)
+            };
+
+            let text = vec![
+                Line::from(vec![
+                    Span::styled("🔴 Active Session: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::raw(&session.id[..8.min(session.id.len())]),
+                    Span::raw(" | "),
+                    Span::styled("Context: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{} tokens", context_tokens), Style::default().fg(Color::Yellow)),
+                    Span::raw(" | "),
+                    Span::styled("Total: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{} tokens", cumulative_tokens), Style::default().fg(Color::Yellow)),
+                    Span::raw(" | "),
+                    Span::styled(cost_text, Style::default().fg(Color::Green)),
+                    Span::raw(" | "),
+                    Span::raw(format!("{}m ago", duration)),
+                ]),
+            ];
+
+            let active_panel = Paragraph::new(text)
+                .block(
+                    Block::default()
+                        .title("Claude Code - Active Session (Last 5 Hours)")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .alignment(Alignment::Center);
+
+            frame.render_widget(active_panel, area);
+        }
     }
 
     fn render_cost_panel(&self, frame: &mut Frame, area: Rect) {
@@ -175,34 +301,51 @@ impl Dashboard {
     fn render_usage_info(&self, frame: &mut Frame, area: Rect) {
         let usage = self.state.token_usage.lock().unwrap();
         let conversation_id = self.state.current_conversation.lock().unwrap();
-        
+        let data_source = self.state.get_active_data_source();
+
         let mut text = vec![];
-        
+
         // Show conversation ID if present
         if let Some(ref id) = *conversation_id {
             text.push(Line::from(format!("Session ID: {}", id)));
         } else {
             text.push(Line::from("No active conversation in this directory"));
         }
-        
+
         // Token breakdown
         text.push(Line::from(""));
         text.push(Line::from(Span::styled(
-            "Token Breakdown:",
+            "Token Breakdown (Current Context):",
             Style::default().add_modifier(Modifier::BOLD),
         )));
         text.push(Line::from(format!(
-            "  Conversation: {} tokens",
+            "  Cache Read: {} tokens",
             usage.history_tokens
         )));
         text.push(Line::from(format!(
-            "  Context Files: {} tokens",
+            "  Cache Creation: {} tokens",
             usage.context_tokens
         )));
         text.push(Line::from(format!(
-            "  Total: {} / {} ({:.1}%)",
+            "  Total Context: {} / {} ({:.1}%)",
             usage.used, usage.context_window, usage.percentage
         )));
+
+        // Add cumulative total for Claude sessions
+        if matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+            if let Some(session) = self.state.get_active_claude_session() {
+                let cumulative = session.total_tokens.total();
+                text.push(Line::from(""));
+                text.push(Line::from(Span::styled(
+                    "Cumulative Usage (All Messages):",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                text.push(Line::from(format!(
+                    "  Total Tokens: {} (for billing)",
+                    cumulative
+                )));
+            }
+        }
         
         // Compaction info
         text.push(Line::from(""));
@@ -820,6 +963,7 @@ impl Dashboard {
                 ("G", "Current Dir"),
                 ("L", "List All"),
                 ("S", "Sessions"),
+                ("P", "Provider"),
                 ("R", "Refresh"),
                 ("Q", "Quit"),
             ],
@@ -827,6 +971,7 @@ impl Dashboard {
                 ("G", "Global View"),
                 ("L", "List All"),
                 ("S", "Sessions"),
+                ("P", "Provider"),
                 ("R", "Refresh"),
                 ("Q", "Quit"),
             ],
@@ -834,6 +979,7 @@ impl Dashboard {
                 ("G", "Global View"),
                 ("C", "Current Dir"),
                 ("S", "Sessions"),
+                ("P", "Provider"),
                 ("↑↓", "Navigate"),
                 ("Q", "Quit"),
             ],
@@ -841,6 +987,7 @@ impl Dashboard {
                 ("G", "Global"),
                 ("C", "Current"),
                 ("A", "Toggle Active"),
+                ("P", "Provider"),
                 ("↑↓", "Navigate"),
                 ("Enter", "Details"),
                 ("Q", "Quit"),
@@ -849,6 +996,7 @@ impl Dashboard {
                 ("Esc", "Back"),
                 ("G", "Global"),
                 ("S", "Sessions"),
+                ("P", "Provider"),
                 ("Q", "Quit"),
             ],
         };
@@ -958,11 +1106,36 @@ impl Dashboard {
     }
 
     fn get_usage_color(&self, percentage: f64) -> Color {
-        match percentage {
-            p if p >= 90.0 => Color::Red,
-            p if p >= 70.0 => Color::Yellow,
-            _ => Color::Green,
+        // Use Claude-specific thresholds when in Claude mode
+        let data_source = self.state.get_active_data_source();
+
+        match data_source {
+            crate::data::DataSourceType::ClaudeCode => {
+                // For Claude, use configurable thresholds
+                let warning_threshold = self.state.config.claude_warning_threshold * 100.0;
+                match percentage {
+                    p if p >= 95.0 => Color::Red,      // Critical at 95%
+                    p if p >= warning_threshold => Color::Yellow,  // Warning at config threshold (default 80%)
+                    _ => Color::Green,
+                }
+            },
+            _ => {
+                // For other data sources, use the standard thresholds
+                match percentage {
+                    p if p >= 90.0 => Color::Red,
+                    p if p >= 70.0 => Color::Yellow,
+                    _ => Color::Green,
+                }
+            }
         }
+    }
+
+    pub fn is_switching_provider(&self) -> bool {
+        self.switching_provider
+    }
+
+    pub fn reset_switching_flag(&mut self) {
+        self.switching_provider = false;
     }
 
     pub fn handle_key(&mut self, key: crossterm::event::KeyCode) -> bool {
@@ -1081,6 +1254,17 @@ impl Dashboard {
                         *selected += 1;
                     }
                 }
+                true
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') => {
+                // Toggle provider - mark that we want to switch
+                self.switching_provider = true;
+                // The actual switching would need to be handled at a higher level
+                // since it requires restarting the collector
+                true
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                // Force refresh
                 true
             }
             KeyCode::Char('?') => {
