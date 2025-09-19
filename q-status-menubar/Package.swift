@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version: 5.10
 import PackageDescription
 
 let package = Package(
@@ -18,9 +18,6 @@ let package = Package(
             name: "App",
             dependencies: ["Core"],
             path: "Sources/App",
-            resources: [
-                // We will add assets/Info.plist when we switch to Xcode app target
-            ],
             swiftSettings: [
                 .define("SWIFTUI_APP")
             ]
