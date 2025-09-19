@@ -2,6 +2,62 @@ import Foundation
 import Combine
 import Yams
 
+public enum ClaudePlan: String, CaseIterable, Codable {
+    case free
+    case starter
+    case pro
+    case enterprise
+    case custom
+
+    public var displayName: String {
+        switch self {
+        case .free: return "Free"
+        case .starter: return "Starter"
+        case .pro: return "Pro"
+        case .enterprise: return "Enterprise"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Approximate monthly cost cap in USD. Enterprise uses 0 to indicate no fixed cap.
+    public var costLimit: Double {
+        switch self {
+        case .free: return 0
+        case .starter: return 120
+        case .pro: return 400
+        case .enterprise: return 0
+        case .custom: return 0
+        }
+    }
+
+    /// Approximate session token budget (context window) for plan defaults.
+    public var tokenLimit: Int {
+        switch self {
+        case .free: return 0
+        case .starter: return 200_000
+        case .pro: return 400_000
+        case .enterprise: return 600_000
+        case .custom: return 0
+        }
+    }
+
+    /// Informational monthly message guideline for UI display.
+    public var messageLimit: Int {
+        switch self {
+        case .free: return 0
+        case .starter: return 5_000
+        case .pro: return 25_000
+        case .enterprise: return 0
+        case .custom: return 0
+        }
+    }
+}
+
+public enum ClaudeViewMode: String, CaseIterable, Codable {
+    case compact
+    case expanded
+}
+
 public final class SettingsStore: ObservableObject {
     @Published public var updateInterval: Int = 3
     @Published public var showPercentBadge: Bool = true
@@ -25,6 +81,7 @@ public final class SettingsStore: ObservableObject {
     @Published public var costRatePer1kTokensUSD: Double = 0.0066
     @Published public var costModelName: String = "q-default"
     @Published public var modelPricing: [String: Double] = [:]
+    @Published public var costMode: String = CostMode.auto.rawValue
 
     // Filters & grouping
     @Published public var groupByFolder: Bool = false
@@ -38,6 +95,16 @@ public final class SettingsStore: ObservableObject {
 
     // UI density
     @Published public var compactMode: Bool = true
+
+    // Data source management
+    @Published public var dataSourceType: DataSourceType = .amazonQ
+    @Published public var claudeConfigPaths: [String] = SettingsStore.defaultClaudeConfigPaths()
+
+    // Claude plan management
+    @Published public var claudePlan: ClaudePlan = .free
+    @Published public var claudeViewMode: ClaudeViewMode = .compact
+    @Published public var customPlanTokenLimit: Int = 200_000
+    @Published public var customPlanCostLimit: Double = 150.0
 
     public init() {
         loadFromDisk()
@@ -74,6 +141,17 @@ public final class SettingsStore: ObservableObject {
                     if let pin = dict["pinned_session_key"] as? String { self.pinnedSessionKey = pin }
                     if let badge = dict["show_active_badge"] as? Bool { self.showActiveBadge = badge }
                     if let compact = dict["compact_mode"] as? Bool { self.compactMode = compact }
+                    if let pricingMode = dict["claude_cost_mode"] as? String { self.costMode = pricingMode }
+                    if let ds = dict["data_source_type"] as? String, let parsed = DataSourceType(rawValue: ds) { self.dataSourceType = parsed }
+                    if let paths = dict["claude_config_paths"] as? [Any] {
+                        self.claudeConfigPaths = paths.compactMap { $0 as? String }
+                    } else if let csv = dict["claude_config_paths"] as? String {
+                        self.claudeConfigPaths = csv.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                    }
+                    if let planRaw = dict["claude_plan"] as? String, let plan = ClaudePlan(rawValue: planRaw) { self.claudePlan = plan }
+                    if let viewModeRaw = dict["claude_view_mode"] as? String, let mode = ClaudeViewMode(rawValue: viewModeRaw) { self.claudeViewMode = mode }
+                    if let customTokenLimit = dict["claude_custom_token_limit"] as? Int { self.customPlanTokenLimit = customTokenLimit }
+                    if let customCostLimit = dict["claude_custom_cost_limit"] as? Double { self.customPlanCostLimit = customCostLimit }
                 }
             }
         } catch {
@@ -97,12 +175,19 @@ public final class SettingsStore: ObservableObject {
             "cost_rate_per_1k_tokens_usd": costRatePer1kTokensUSD,
             "cost_model_name": costModelName,
             "model_pricing": modelPricing,
+            "claude_cost_mode": costMode,
             "group_by_folder": groupByFolder,
             "refresh_interval_seconds": refreshIntervalSeconds,
             "icon_mode": iconMode.rawValue,
             "pinned_session_key": pinnedSessionKey as Any,
             "show_active_badge": showActiveBadge,
-            "compact_mode": compactMode
+            "compact_mode": compactMode,
+            "data_source_type": dataSourceType.rawValue,
+            "claude_config_paths": claudeConfigPaths,
+            "claude_plan": claudePlan.rawValue,
+            "claude_view_mode": claudeViewMode.rawValue,
+            "claude_custom_token_limit": customPlanTokenLimit,
+            "claude_custom_cost_limit": customPlanCostLimit
         ]
         do {
             let yaml = try Yams.dump(object: dict)
@@ -126,17 +211,60 @@ public final class SettingsStore: ObservableObject {
         if let s = env["QSTATUS_DEFAULT_CTX_WINDOW"], let v = Int(s) { defaultContextWindowTokens = v }
         if let s = env["QSTATUS_COST_RATE_1K"], let v = Double(s) { costRatePer1kTokensUSD = v }
         if let s = env["QSTATUS_COST_MODEL" ] { costModelName = s }
+        if let s = env["QSTATUS_CLAUDE_COST_MODE"], let mode = CostMode(rawValue: s) { costMode = mode.rawValue }
         if let s = env["QSTATUS_GROUP_BY_FOLDER"], let v = Bool(fromString: s) { groupByFolder = v }
         if let s = env["QSTATUS_REFRESH_SECS"], let v = Int(s) { refreshIntervalSeconds = v }
         if let s = env["QSTATUS_ICON_MODE"], let v = IconMode(rawValue: s) { iconMode = v }
         if let s = env["QSTATUS_PINNED_SESSION"], !s.isEmpty { pinnedSessionKey = s }
         if let s = env["QSTATUS_BADGE_ACTIVE"], let v = Bool(fromString: s) { showActiveBadge = v }
         if let s = env["QSTATUS_COMPACT"], let v = Bool(fromString: s) { compactMode = v }
+        if let s = env["QSTATUS_DATA_SOURCE"], let v = DataSourceType(rawValue: s) { dataSourceType = v }
+        if let s = env["QSTATUS_CLAUDE_PLAN"], let v = ClaudePlan(rawValue: s) { claudePlan = v }
+        if let s = env["QSTATUS_CLAUDE_VIEW_MODE"], let v = ClaudeViewMode(rawValue: s) { claudeViewMode = v }
+        if let s = env["QSTATUS_CLAUDE_CONFIG_DIRS"], !s.isEmpty {
+            claudeConfigPaths = s.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        if let s = env["QSTATUS_CLAUDE_TOKEN_LIMIT"], let v = Int(s) { customPlanTokenLimit = v }
+        if let s = env["QSTATUS_CLAUDE_COST_LIMIT"], let v = Double(s) { customPlanCostLimit = v }
     }
 
     private func configURL() -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".config/q-status/config.yaml")
+    }
+
+    public var claudeTokenLimit: Int {
+        switch claudePlan {
+        case .free: return 0
+        case .custom: return customPlanTokenLimit
+        default: return claudePlan.tokenLimit
+        }
+    }
+
+    public var claudeCostLimit: Double {
+        switch claudePlan {
+        case .custom: return customPlanCostLimit
+        default: return claudePlan.costLimit
+        }
+    }
+
+    public func claudeTokenLimitPercentage(currentTokens: Int) -> Double {
+        let limit = claudeTokenLimit
+        guard limit > 0 else { return 0 }
+        let pct = (Double(currentTokens) / Double(limit)) * 100.0
+        return min(100.0, max(0.0, pct))
+    }
+
+    public func isApproachingClaudeLimit(currentTokens: Int) -> Bool {
+        claudeTokenLimitPercentage(currentTokens: currentTokens) >= 80.0
+    }
+
+    private static func defaultClaudeConfigPaths() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return [
+            home.appendingPathComponent(".config/claude").path,
+            home.appendingPathComponent(".claude").path
+        ]
     }
 }
 
