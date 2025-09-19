@@ -86,11 +86,30 @@ final class MenuBarController: NSObject {
                 tooltip = "Pinned: not found"
             }
         case .monthlyMessages:
-            let pct = min(100.0, (Double(vm.messagesMonth)/5000.0)*100.0)
-            percent = Int(pct.rounded())
-            state = (pct >= 90 ? .critical : (pct >= 70 ? .warning : (pct <= 0 ? .idle : .healthy)))
-            labelOverride = "\(Int(round(pct)))%"
-            tooltip = "Monthly messages: \(vm.messagesMonth)/5000"
+            // For Claude Code, show cost against plan; for Amazon Q show messages
+            if settings.dataSourceType == .claudeCode {
+                let plan = settings.claudePlan
+                if plan != .free {
+                let costPct = plan.costLimit > 0 ? min(100.0, (vm.costMonth / plan.costLimit) * 100.0) : 0
+                percent = Int(costPct.rounded())
+                state = (costPct >= 95 ? .critical : (costPct >= 80 ? .warning : (costPct <= 0 ? .idle : .healthy)))
+                labelOverride = "\(Int(round(costPct)))%"
+                tooltip = "Claude \(plan.displayName): \(CostEstimator.formatUSD(vm.costMonth))/\(CostEstimator.formatUSD(plan.costLimit)) (\(Int(costPct))%)"
+                } else {
+                    // Free plan
+                    percent = 0
+                    state = .idle
+                    labelOverride = "Free"
+                    tooltip = "Claude Free Plan - No tracking"
+                }
+            } else {
+                // Original message-based display for Amazon Q or free plan
+                let pct = min(100.0, (Double(vm.messagesMonth)/5000.0)*100.0)
+                percent = Int(pct.rounded())
+                state = (pct >= 90 ? .critical : (pct >= 70 ? .warning : (pct <= 0 ? .idle : .healthy)))
+                labelOverride = "\(Int(round(pct)))%"
+                tooltip = "Monthly messages: \(vm.messagesMonth)/5000"
+            }
         }
 
         let activeCount = settings.showActiveBadge ? activeSessionsCount(from: vm.sessions) : 0
@@ -130,11 +149,15 @@ final class MenuBarController: NSObject {
     private func showPopover(_ sender: Any?) {
         if hostingController == nil {
             let vm = coordinator.viewModel
+            // Set up provider switch callback
+            vm.onSwitchProvider = { [weak self] provider in
+                await self?.switchProvider(to: provider)
+            }
             let view = DropdownView(viewModel: vm)
             let controller = NSHostingController(rootView: view)
             hostingController = controller
             popover.contentViewController = controller
-            popover.contentSize = NSSize(width: 320, height: 360)
+            popover.contentSize = NSSize(width: 500, height: 400)
         }
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -143,5 +166,17 @@ final class MenuBarController: NSObject {
 
     private func closePopover(_ sender: Any?) {
         popover.performClose(sender)
+    }
+
+    func switchProvider(to provider: DataSourceType) async {
+        // Create new data source
+        let newDataSource = DataSourceFactory.create(type: provider, settings: settings)
+
+        // Update settings
+        settings.dataSourceType = provider
+        settings.saveToDisk()
+
+        // Restart coordinator with new data source
+        await coordinator.restart(with: newDataSource)
     }
 }
