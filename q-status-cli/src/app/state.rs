@@ -8,6 +8,8 @@ use std::collections::VecDeque;
 
 use super::config::AppConfig;
 use crate::data::database::{CompactionStatus, ConversationSummary, GlobalStats, Session, DirectoryGroup, PeriodMetrics};
+use crate::data::DataSourceType;
+use crate::data::claude_datasource::ClaudeSession;
 
 // Type alias for usage history
 pub type UsageHistory = Vec<(DateTime<Local>, u64)>;
@@ -69,6 +71,7 @@ pub struct AppState {
     pub is_connected: Arc<Mutex<bool>>,
     pub last_update: Arc<Mutex<DateTime<Local>>>,
     pub config: AppConfig,
+    pub active_data_source: Arc<Mutex<DataSourceType>>,
     // New fields for global monitoring
     pub all_conversations: Arc<Mutex<Vec<ConversationSummary>>>,
     pub global_stats: Arc<Mutex<Option<GlobalStats>>>,
@@ -83,11 +86,30 @@ pub struct AppState {
     pub scroll_offset: Arc<Mutex<u16>>,  // For scrolling in lists
     pub burn_rate: Arc<Mutex<BurnRate>>,  // Track token burn rate
     pub period_metrics: Arc<Mutex<Option<PeriodMetrics>>>,  // Time-based metrics
+    pub active_claude_session: Arc<Mutex<Option<ClaudeSession>>>,  // Active Claude session within 5 hours
 }
 
 impl AppState {
+    pub fn get_active_data_source(&self) -> DataSourceType {
+        *self.active_data_source.lock().unwrap()
+    }
+
+    pub fn set_active_data_source(&self, source: DataSourceType) {
+        *self.active_data_source.lock().unwrap() = source;
+    }
+
+    pub fn get_active_claude_session(&self) -> Option<ClaudeSession> {
+        self.active_claude_session.lock().unwrap().clone()
+    }
+
+    pub fn set_active_claude_session(&self, session: Option<ClaudeSession>) {
+        *self.active_claude_session.lock().unwrap() = session;
+    }
+
     pub fn new(config: AppConfig) -> Self {
+        let initial_source = config.active_data_source.unwrap_or(DataSourceType::AmazonQ);
         Self {
+            active_data_source: Arc::new(Mutex::new(initial_source)),
             token_usage: Arc::new(Mutex::new(TokenUsage {
                 used: 0,
                 limit: 175_000,  // Effective limit before compaction triggers
@@ -130,6 +152,7 @@ impl AppState {
                 last_total_tokens: 0,
             })),
             period_metrics: Arc::new(Mutex::new(None)),
+            active_claude_session: Arc::new(Mutex::new(None)),
         }
     }
 

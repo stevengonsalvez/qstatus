@@ -8,7 +8,7 @@ fn test_app_state_creation() {
     // Verify initial state
     let usage = state.token_usage.lock().unwrap();
     assert_eq!(usage.used, 0);
-    assert_eq!(usage.limit, 44000);
+    assert_eq!(usage.limit, 175000);  // Updated to match actual Amazon Q context window
     assert_eq!(usage.percentage, 0.0);
 }
 

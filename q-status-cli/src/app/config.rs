@@ -15,10 +15,22 @@ pub struct AppConfig {
     pub history_retention_hours: u64,
     pub export_format: ExportFormat,
     pub theme: Theme,
+    #[serde(default = "default_data_source")]
+    pub data_source: String,
+    #[serde(default = "default_cost_mode")]
+    pub cost_mode: String,
+    #[serde(default)]
+    pub claude_config_paths: Vec<String>,
+    #[serde(default = "default_claude_token_limit")]
+    pub claude_token_limit: usize,
+    #[serde(default = "default_claude_warning_threshold")]
+    pub claude_warning_threshold: f64,
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
     #[serde(skip)]
     pub debug: bool,
+    #[serde(skip)]
+    pub active_data_source: Option<crate::data::DataSourceType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +49,22 @@ pub enum Theme {
     Auto,
 }
 
+fn default_data_source() -> String {
+    "amazon-q".to_string()
+}
+
+fn default_cost_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_claude_token_limit() -> usize {
+    200_000
+}
+
+fn default_claude_warning_threshold() -> f64 {
+    0.8
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -48,8 +76,14 @@ impl Default for AppConfig {
             history_retention_hours: 24,
             export_format: ExportFormat::Csv,
             theme: Theme::Dark,
+            data_source: default_data_source(),
+            cost_mode: default_cost_mode(),
+            claude_config_paths: vec![],
+            claude_token_limit: default_claude_token_limit(),
+            claude_warning_threshold: default_claude_warning_threshold(),
             config_path: None,
             debug: false,
+            active_data_source: None,
         }
     }
 }
@@ -75,6 +109,30 @@ impl AppConfig {
         if let Ok(rate) = std::env::var("Q_STATUS_REFRESH_RATE") {
             if let Ok(parsed) = rate.parse() {
                 config.refresh_rate = parsed;
+            }
+        }
+
+        // Check for data source environment variable
+        if let Ok(source) = std::env::var("QSTATUS_DATA_SOURCE") {
+            config.data_source = source;
+        }
+
+        // Check for cost mode environment variable
+        if let Ok(mode) = std::env::var("QSTATUS_COST_MODE") {
+            config.cost_mode = mode;
+        }
+
+        // Check for Claude token limit
+        if let Ok(limit) = std::env::var("QSTATUS_CLAUDE_TOKEN_LIMIT") {
+            if let Ok(parsed) = limit.parse() {
+                config.claude_token_limit = parsed;
+            }
+        }
+
+        // Check for Claude warning threshold
+        if let Ok(threshold) = std::env::var("QSTATUS_CLAUDE_WARNING_THRESHOLD") {
+            if let Ok(parsed) = threshold.parse() {
+                config.claude_warning_threshold = parsed;
             }
         }
 

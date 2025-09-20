@@ -3,9 +3,9 @@
 
 use crate::app::state::{AppEvent, AppState, TokenSnapshot};
 use crate::data::database::QDatabase;
+use crate::data::datasource::DataSource;
 use crate::utils::error::Result;
 use crossbeam_channel::Sender;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
@@ -13,38 +13,25 @@ use chrono::Local;
 
 pub struct DataCollector {
     state: Arc<AppState>,
-    database: QDatabase,
+    database: Box<dyn DataSource>,
     event_tx: Sender<AppEvent>,
-    file_watcher: Option<notify::RecommendedWatcher>,
+    _file_watcher: Option<notify::RecommendedWatcher>,  // Prefixed with _ to indicate intentionally unused
 }
 
 impl DataCollector {
-    pub fn new(state: Arc<AppState>, event_tx: Sender<AppEvent>) -> Result<Self> {
-        let database = QDatabase::new()?;
-
+    pub fn new(state: Arc<AppState>, database: Box<dyn DataSource>, event_tx: Sender<AppEvent>) -> Result<Self> {
         Ok(Self {
             state,
             database,
             event_tx,
-            file_watcher: None,
+            _file_watcher: None,
         })
     }
 
     pub fn start_file_watching(&mut self) -> Result<()> {
-        let tx = self.event_tx.clone();
-        let db_path = self.database.db_path.clone();
-
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            if let Ok(event) = res {
-                if matches!(event.kind, EventKind::Modify(_)) {
-                    let _ = tx.send(AppEvent::FileChanged);
-                }
-            }
-        })?;
-
-        watcher.watch(db_path.parent().unwrap(), RecursiveMode::NonRecursive)?;
-
-        self.file_watcher = Some(watcher);
+        // File watching is specific to QDatabase implementation
+        // For now, we'll skip it when using the trait abstraction
+        // TODO: Add a method to DataSource trait to get watch path if needed
         Ok(())
     }
 
@@ -61,9 +48,9 @@ impl DataCollector {
             ticker.tick().await;
 
             // Check for database changes
-            match self.database.has_changed() {
+            match self.database.has_changed().await {
                 Ok(true) => {
-                    if let Err(e) = self.collect_data() {
+                    if let Err(e) = self.collect_data().await {
                         eprintln!("Data collection error: {}", e);
                     }
                 }
@@ -78,40 +65,63 @@ impl DataCollector {
         }
     }
 
-    fn collect_data(&mut self) -> Result<()> {
+    async fn collect_data(&mut self) -> Result<()> {
         // Mark as connected if database is accessible
         *self.state.is_connected.lock().unwrap() = true;
         
         // Collect ALL conversations for global view
-        let all_summaries = self.database.get_all_conversation_summaries()?;
+        let all_summaries = self.database.get_all_conversation_summaries().await?;
         *self.state.all_conversations.lock().unwrap() = all_summaries.clone();
-        
+
         // Collect session-level data
-        let all_sessions = self.database.get_all_sessions(self.state.config.cost_per_1k_tokens)?;
+        let all_sessions = self.database.get_all_sessions(self.state.config.cost_per_1k_tokens).await?;
         *self.state.all_sessions.lock().unwrap() = all_sessions.clone();
-        
+
         // Collect grouped sessions
-        let directory_groups = self.database.get_sessions_grouped_by_directory(self.state.config.cost_per_1k_tokens)?;
+        let directory_groups = self.database.get_directory_groups(self.state.config.cost_per_1k_tokens).await?;
         *self.state.directory_groups.lock().unwrap() = directory_groups.clone();
-        
+
         // Calculate global stats
-        let global_stats = self.database.get_global_stats(self.state.config.cost_per_1k_tokens)?;
+        let global_stats = self.database.get_global_stats(self.state.config.cost_per_1k_tokens).await?;
         *self.state.global_stats.lock().unwrap() = Some(global_stats.clone());
-        
+
         // Get period-based metrics
-        if let Ok(period_metrics) = self.database.get_period_metrics(self.state.config.cost_per_1k_tokens) {
+        if let Ok(period_metrics) = self.database.get_period_metrics(self.state.config.cost_per_1k_tokens).await {
             *self.state.period_metrics.lock().unwrap() = Some(period_metrics);
         }
         
         // Update last refresh time
         *self.state.last_refresh.lock().unwrap() = chrono::Local::now();
-        
+
+        // Update active Claude session if using Claude data source
+        let data_source = self.state.get_active_data_source();
+        if matches!(data_source, crate::data::DataSourceType::ClaudeCode) {
+            // Try to downcast to ClaudeCodeDataSource to get active session
+            if let Some(claude_source) = self.database.as_any().downcast_ref::<crate::data::claude_datasource::ClaudeCodeDataSource>() {
+                if let Ok(active_session) = claude_source.get_active_session().await {
+                    self.state.set_active_claude_session(active_session);
+                }
+            }
+        }
+
         // Also get latest conversation (most recently modified)
-        let conversation = self.database.get_current_conversation(None)?;
+        let conversation = self.database.get_current_conversation(None).await?;
 
         if let Some(conv) = conversation {
             // Get detailed token usage
-            let usage_details = self.database.get_token_usage(&conv);
+            let usage_details = self.database.get_token_usage(&conv).await.unwrap_or_else(|_| {
+                // Fallback to empty details if there's an error
+                crate::data::database::TokenUsageDetails {
+                    history_tokens: 0,
+                    context_tokens: 0,
+                    total_tokens: 0,
+                    context_window: 175_000,
+                    percentage: 0.0,
+                    compaction_status: crate::data::database::CompactionStatus::Safe,
+                    has_summary: false,
+                    message_count: 0,
+                }
+            });
             
             // Update state with detailed information
             self.state.update_token_usage_details(usage_details.clone());
@@ -211,7 +221,23 @@ pub fn spawn_collector(
     state: Arc<AppState>,
     event_tx: Sender<AppEvent>,
 ) -> Result<tokio::task::JoinHandle<()>> {
-    let collector = DataCollector::new(state, event_tx)?;
+    // Create a QDatabase and box it as a DataSource
+    let database = QDatabase::new()?;
+    let database_box: Box<dyn DataSource> = Box::new(database);
+
+    let collector = DataCollector::new(state, database_box, event_tx)?;
+
+    Ok(tokio::spawn(async move {
+        collector.run().await;
+    }))
+}
+
+pub fn spawn_collector_with_datasource(
+    state: Arc<AppState>,
+    event_tx: Sender<AppEvent>,
+    datasource: Box<dyn DataSource>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    let collector = DataCollector::new(state, datasource, event_tx)?;
 
     Ok(tokio::spawn(async move {
         collector.run().await;
