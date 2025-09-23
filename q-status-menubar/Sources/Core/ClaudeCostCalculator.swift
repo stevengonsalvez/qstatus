@@ -148,6 +148,30 @@ public struct ClaudeCostCalculator {
             maxTokens: 200_000
         ),
 
+        // Claude 4 Opus (newer generation)
+        "claude-opus-4-1-20250805": ModelPricing.fromMillionTokens(
+            inputCostPerMillion: 15.0,  // Same as Claude 3 Opus for now
+            outputCostPerMillion: 75.0,
+            maxTokens: 200_000
+        ),
+        "claude-opus-4-1": ModelPricing.fromMillionTokens(
+            inputCostPerMillion: 15.0,
+            outputCostPerMillion: 75.0,
+            maxTokens: 200_000
+        ),
+
+        // Claude 4 Sonnet (newer generation)
+        "claude-sonnet-4-20250514": ModelPricing.fromMillionTokens(
+            inputCostPerMillion: 3.0,  // Same as Claude 3.5 Sonnet for now
+            outputCostPerMillion: 15.0,
+            maxTokens: 200_000
+        ),
+        "claude-sonnet-4": ModelPricing.fromMillionTokens(
+            inputCostPerMillion: 3.0,
+            outputCostPerMillion: 15.0,
+            maxTokens: 200_000
+        ),
+
         // Legacy/fallback
         "claude-2.1": ModelPricing.fromMillionTokens(
             inputCostPerMillion: 8.0,
@@ -286,8 +310,17 @@ public struct ClaudeCostCalculator {
     private static func fuzzyMatchModel(_ model: String) -> ModelPricing? {
         // Check for model family matches
         if model.contains("opus") {
+            // Check for Claude 4 Opus
+            if model.contains("4-1") || model.contains("opus-4") {
+                return modelPricing["claude-opus-4-1"]
+            }
             return modelPricing["claude-3-opus"]
         } else if model.contains("sonnet") {
+            // Check for Claude 4 Sonnet
+            if model.contains("sonnet-4") {
+                return modelPricing["claude-sonnet-4"]
+            }
+            // Check for Claude 3.5 Sonnet
             if model.contains("3-5") || model.contains("3.5") {
                 return modelPricing["claude-3-5-sonnet"]
             }

@@ -370,6 +370,13 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     weekCost += row.weekCost
                     monthCost += row.monthCost
                     yearCost += row.yearCost
+                    // Debug logging to identify zero cost issue
+                    if monthCost == 0 && !perModel.isEmpty {
+                        print("[DEBUG] Month cost is zero but tokens exist:")
+                        for row in perModel {
+                            print("  Model: \(row.modelId ?? "nil"), Month tokens: \(row.monthTokens), Month cost: \(row.monthCost)")
+                        }
+                    }
                     // Weighted average rate per 1k based on day tokens
                     let rate = row.dayTokens > 0 ? (row.dayCost * 1000.0 / Double(row.dayTokens)) : self.settings.costRatePer1kTokensUSD
                     weightedRateNumerator += Double(row.dayTokens) * rate
@@ -437,12 +444,15 @@ public final class UpdateCoordinator: @unchecked Sendable {
         if let claudeReader = reader as? ClaudeCodeDataSource {
             do {
                 let activeSession = try await claudeReader.fetchActiveSession()
+                let maxTokens = await claudeReader.getMaxTokensFromPreviousBlocks()
                 await MainActor.run {
                     viewModel.activeClaudeSession = activeSession
+                    viewModel.maxTokensFromPreviousBlocks = maxTokens
                 }
             } catch {
                 await MainActor.run {
                     viewModel.activeClaudeSession = nil
+                    viewModel.maxTokensFromPreviousBlocks = nil
                 }
             }
         }
@@ -517,6 +527,7 @@ public final class UsageViewModel: ObservableObject {
     public var onSwitchProvider: ((DataSourceType) async -> Void)? = nil
     // Active Claude Code session
     @Published public var activeClaudeSession: ActiveSessionData? = nil
+    @Published public var maxTokensFromPreviousBlocks: Int? = nil
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {

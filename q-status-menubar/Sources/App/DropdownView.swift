@@ -167,11 +167,14 @@ struct DropdownView: View {
         // Overall (30-day stats)
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Label("Overall", systemImage: "chart.bar.fill")
+                Image(systemName: "chart.bar.fill")
+                Text("Overall")
+                Text("• Session Context")
                     .font(.caption)
-                    .foregroundStyle(.purple)
-                Spacer()
+                    .foregroundStyle(.secondary)
             }
+            .font(.caption)
+            .foregroundStyle(.purple)
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text("Sessions: \(viewModel.globalSessions) • Tokens: \(formatTokens(viewModel.tokensMonth)) • Cost: \(CostEstimator.formatUSD(viewModel.costMonth))")
@@ -326,9 +329,9 @@ struct DropdownView: View {
     @ViewBuilder
     private func sessionHeader(_ activeSession: ActiveSessionData) -> some View {
         HStack {
-            Label("Realtime", systemImage: "bolt.fill")
+            Label("Active Session", systemImage: "circle.fill")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(activeSession.isActive ? .green : .orange)
             Spacer()
             if activeSession.isActive {
                 Text("LIVE")
@@ -1084,9 +1087,9 @@ extension DropdownView {
             let contextTokens = activeSession.tokens  // Current context tokens (not cumulative)
             let cost = activeSession.cost  // Session cost
 
-            // Use context window limit (200K) for percentage calculation
+            // Use context window limit for percentage calculation
             // This matches what Claude Code Usage Monitor shows
-            let contextWindow = 200_000  // Standard context window for Claude models
+            let contextWindow = viewModel.settings?.claudeTokenLimit ?? 200_000
             let percent = Double(contextTokens) / Double(contextWindow) * 100
 
             return (percent, contextTokens, cost)
@@ -1099,11 +1102,18 @@ extension DropdownView {
     @ViewBuilder
     private func sessionBlockPercentageView(plan: ClaudePlan) -> some View {
         let sessionData = calculateSessionBlockPercentage(plan: plan)
+        let contextWindow = viewModel.settings?.claudeTokenLimit ?? 200_000
 
-        Text("\(Int(sessionData.percent))%")
-            .font(.system(size: 28, weight: .bold, design: .rounded))
-            .foregroundStyle(costPercentColor(sessionData.percent))
-            .help("Context usage: \(formatTokens(sessionData.tokens)) of 200K tokens • Session cost: \(CostEstimator.formatUSD(sessionData.cost))")
+        VStack(spacing: 2) {
+            Text("\(Int(sessionData.percent))%")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(costPercentColor(sessionData.percent))
+
+            Text("Session")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .help("Session context usage: \(formatTokens(sessionData.tokens)) of \(formatTokens(contextWindow)) tokens • Session cost: \(CostEstimator.formatUSD(sessionData.cost))")
     }
 
     fileprivate func costPercentColor(_ percent: Double) -> Color {
@@ -1809,7 +1819,7 @@ struct BurnRateView: View {
         }
 
         // Token limit prediction - when will we hit context limit
-        let contextLimit = 200_000  // Standard context window
+        let contextLimit = settings.claudeTokenLimit
         let currentTokens = activeSession.tokens
         let remainingTokens = max(0, contextLimit - currentTokens)
 
@@ -1924,6 +1934,13 @@ struct ClaudeCodeUsageView: View {
 
     // Computed properties for limits
     private var tokenLimit: Int {
+        // Try to get max from previous sessions first (like ccusage)
+        if let maxFromPrevious = viewModel.maxTokensFromPreviousBlocks,
+           maxFromPrevious > 0 {
+            return maxFromPrevious
+        }
+
+        // Fall back to plan limits
         guard let plan = viewModel.settings?.claudePlan, plan != .free else { return 0 }
         if plan == .custom {
             return viewModel.settings?.customPlanTokenLimit ?? 200_000
@@ -2142,6 +2159,7 @@ struct ClaudeCodeUsageView: View {
                                     percentage: tokenPercentage,
                                     formatter: formatTokens
                                 )
+                                .help("Comparing against personal max usage from previous sessions")
 
                                 // Cost usage bar
                                 UsageProgressBar(
@@ -2262,17 +2280,6 @@ struct ClaudeCodeUsageView: View {
                         .frame(height: 3)
                         .help("5-hour billing block progress")
                         .padding(.vertical, 2)
-                    }
-
-                    // Show burn rate display
-                    if let activeSession = viewModel.activeClaudeSession,
-                       let settings = viewModel.settings {
-                        BurnRateView(
-                            activeSession: activeSession,
-                            settings: settings,
-                            messagesMonth: viewModel.messagesMonth,
-                            costMonth: viewModel.costMonth
-                        )
                     }
                 }
 

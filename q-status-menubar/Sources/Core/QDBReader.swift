@@ -625,7 +625,20 @@ public actor QDBReader: DataSource {
                 if mDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "m") }
                 if yDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "y") }
             }
-            return byModel.map { (k,v) in PeriodByModel(modelId: k, dayTokens: v.0, weekTokens: v.1, monthTokens: v.2, yearTokens: v.3, dayMessages: v.4, weekMessages: v.5, monthMessages: v.6) }
+            // Calculate costs using default rate (this will be overridden by settings in UpdateCoordinator)
+            let defaultRate = 0.0025 // Default rate per 1k tokens
+            return byModel.map { (k,v) in
+                let dayCost = CostEstimator.estimateUSD(tokens: v.0, ratePer1k: defaultRate)
+                let weekCost = CostEstimator.estimateUSD(tokens: v.1, ratePer1k: defaultRate)
+                let monthCost = CostEstimator.estimateUSD(tokens: v.2, ratePer1k: defaultRate)
+                let yearCost = CostEstimator.estimateUSD(tokens: v.3, ratePer1k: defaultRate)
+                return PeriodByModel(
+                    modelId: k,
+                    dayTokens: v.0, weekTokens: v.1, monthTokens: v.2, yearTokens: v.3,
+                    dayMessages: v.4, weekMessages: v.5, monthMessages: v.6,
+                    dayCost: dayCost, weekCost: weekCost, monthCost: monthCost, yearCost: yearCost
+                )
+            }
         }
     }
 
@@ -690,7 +703,18 @@ public actor QDBReader: DataSource {
                 let dMsg: Int = r["day_msgs"] ?? 0
                 let wMsg: Int = r["week_msgs"] ?? 0
                 let mMsg: Int = r["month_msgs"] ?? 0
-                out.append(PeriodByModel(modelId: mid, dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, yearTokens: 0, dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg))
+                // Calculate costs using default rate (this will be overridden by settings in UpdateCoordinator)
+                let defaultRate = 0.0025 // Default rate per 1k tokens
+                let dayCost = CostEstimator.estimateUSD(tokens: dTok, ratePer1k: defaultRate)
+                let weekCost = CostEstimator.estimateUSD(tokens: wTok, ratePer1k: defaultRate)
+                let monthCost = CostEstimator.estimateUSD(tokens: mTok, ratePer1k: defaultRate)
+                let yearCost = 0.0 // Year tokens not calculated in this method
+                out.append(PeriodByModel(
+                    modelId: mid,
+                    dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, yearTokens: 0,
+                    dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg,
+                    dayCost: dayCost, weekCost: weekCost, monthCost: monthCost, yearCost: yearCost
+                ))
             }
             return out
         }

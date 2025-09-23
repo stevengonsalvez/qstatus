@@ -236,12 +236,12 @@ public actor ClaudeCodeDataSource: DataSource {
             lastActivity: mostRecent.endTime,
             tokens: currentContextTokens,
             cumulativeTokens: cumulativeTokens,
-            cost: mostRecent.totalCostFromJSONL > 0 ? mostRecent.totalCostFromJSONL : mostRecent.totalCost,
+            cost: calculateCumulativeCost(sessions: recentSessions),
             isActive: isActive,
             messageCount: mostRecent.messageCount,
             cwd: mostRecent.cwd,
             model: mostRecent.models.first,
-            costFromJSONL: mostRecent.totalCostFromJSONL > 0,
+            costFromJSONL: hasCostsFromJSONL(sessions: recentSessions),
             messagesPerHour: messagesPerHour,
             tokensPerHour: tokensPerHour,
             costPerHour: costPerHour,
@@ -249,6 +249,18 @@ public actor ClaudeCodeDataSource: DataSource {
             blockNumber: blockNumber,
             totalBlocks: totalBlocks
         )
+    }
+
+    private func calculateCumulativeCost(sessions: [ClaudeSession]) -> Double {
+        return sessions.reduce(0.0) { sum, session in
+            sum + (session.totalCostFromJSONL > 0 ? session.totalCostFromJSONL : session.totalCost)
+        }
+    }
+
+    private func hasCostsFromJSONL(sessions: [ClaudeSession]) -> Bool {
+        return sessions.contains { session in
+            session.totalCostFromJSONL > 0
+        }
     }
 
     public func dataVersion() async throws -> Int {
@@ -436,6 +448,27 @@ public actor ClaudeCodeDataSource: DataSource {
             sessionsNearLimit: sessionsNearLimit,
             topHeavySessions: topSessions
         )
+    }
+
+    /// Get the maximum tokens from all previous (completed) session blocks
+    public func getMaxTokensFromPreviousBlocks() -> Int? {
+        // Get all sessions
+        let allSessions = sessions.values
+
+        // Collect all blocks from all sessions
+        var allBlocks: [SessionBlock] = []
+        for session in allSessions {
+            let blocks = SessionBlockCalculator.identifySessionBlocks(entries: session.entries)
+            allBlocks.append(contentsOf: blocks)
+        }
+
+        // Filter out active and gap blocks, find max
+        let maxTokens = allBlocks
+            .filter { !$0.isActive && !$0.isGap }
+            .map { $0.tokenCounts.totalTokens }
+            .max()
+
+        return maxTokens
     }
 
     // MARK: - Optional Protocol Methods (Empty Implementations)

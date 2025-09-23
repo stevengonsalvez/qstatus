@@ -198,11 +198,27 @@ public struct SessionBlockCalculator {
         var models = Set<String>()
 
         for entry in entries {
+            // Calculate cost if not provided
+            let entryCost: Double
+            if let existingCost = entry.costUSD, existingCost > 0 {
+                entryCost = existingCost
+            } else {
+                // Calculate cost using ClaudeCostCalculator
+                entryCost = ClaudeCostCalculator.calculateCost(
+                    tokens: entry.message.usage,
+                    model: entry.message.model ?? "claude-3-5-sonnet-20241022",
+                    mode: .auto,
+                    existingCost: entry.costUSD
+                )
+            }
+
+            costUSD += entryCost
+
+            // Aggregate token counts
             inputTokens += entry.message.usage.input_tokens
             outputTokens += entry.message.usage.output_tokens
             cacheCreationInputTokens += entry.message.usage.cache_creation_input_tokens ?? 0
             cacheReadInputTokens += entry.message.usage.cache_read_input_tokens ?? 0
-            costUSD += entry.costUSD ?? 0
 
             if let model = entry.message.model {
                 models.insert(model)
