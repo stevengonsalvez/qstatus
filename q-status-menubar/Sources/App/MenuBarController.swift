@@ -50,8 +50,14 @@ final class MenuBarController: NSObject {
         var labelOverride: String? = nil
         var tooltip = "Q-Status"
 
-        // Calculate critical percentage the same way as dropdown view
-        let criticalPct = calculateCriticalPercentage(vm: vm)
+        // Use centralized calculator for consistency
+        let monthlyData = settings.claudePlan.costLimit > 0 ?
+            (cost: vm.costMonth, limit: settings.claudePlan.costLimit) : nil
+        let criticalPct = PercentageCalculator.calculateCriticalPercentage(
+            activeSession: vm.activeClaudeSession,
+            maxTokensFromPreviousBlocks: vm.maxTokensFromPreviousBlocks,
+            monthlyData: monthlyData
+        )
 
         switch settings.iconMode {
         case .mostRecent:
@@ -101,15 +107,16 @@ final class MenuBarController: NSObject {
                     // Build appropriate tooltip based on what we have
                     if let activeSession = vm.activeClaudeSession,
                        let block = activeSession.currentBlock {
-                        // Active block - show which metric is critical
-                        let costBaseline = 140.0
-                        let costPct = min(100.0, (block.costUSD / costBaseline) * 100.0)
-                        let tokenBaseline = Double(vm.maxTokensFromPreviousBlocks ?? 10_000_000)
-                        let tokenPct = tokenBaseline > 0 ? min(100.0, (Double(block.tokenCounts.totalTokens) / tokenBaseline) * 100.0) : 0
+                        // Use centralized calculator to determine which metric is critical
+                        let metric = PercentageCalculator.getCriticalMetric(
+                            activeSession: activeSession,
+                            maxTokensFromPreviousBlocks: vm.maxTokensFromPreviousBlocks
+                        )
 
-                        if tokenPct >= costPct {
-                            let tokenDisplay = formatTokenCount(block.tokenCounts.totalTokens)
-                            let limitDisplay = formatTokenCount(Int(tokenBaseline))
+                        if metric.isTokenCritical {
+                            let tokenBaseline = vm.maxTokensFromPreviousBlocks ?? 10_000_000
+                            let tokenDisplay = PercentageCalculator.formatTokens(block.tokenCounts.totalTokens)
+                            let limitDisplay = PercentageCalculator.formatTokens(tokenBaseline)
                             tooltip = "Claude Block \(activeSession.blockNumber): \(tokenDisplay)/\(limitDisplay) tokens (\(percent)%)"
                         } else {
                             let costDisplay = CostEstimator.formatUSD(block.costUSD)
@@ -166,50 +173,6 @@ final class MenuBarController: NSObject {
     private func cwdTail(_ p: String) -> String { (p as NSString).lastPathComponent }
     private func mapState(_ s: SessionState) -> HealthState {
         switch s { case .critical: return .critical; case .warn: return .warning; default: return .healthy }
-    }
-    private func formatTokenCount(_ tokens: Int) -> String {
-        if tokens >= 1_000_000 {
-            return String(format: "%.1fM", Double(tokens) / 1_000_000)
-        } else if tokens >= 1000 {
-            return String(format: "%.1fK", Double(tokens) / 1_000)
-        } else {
-            return "\(tokens)"
-        }
-    }
-
-    /// Calculate critical percentage the same way as dropdown view
-    private func calculateCriticalPercentage(vm: UsageViewModel) -> Double {
-        // Check if we have an active Claude session with a block
-        if let activeSession = vm.activeClaudeSession,
-           let block = activeSession.currentBlock {
-            // Active block - calculate both token and cost percentages, use the higher one
-            let costBaseline = 140.0
-            let costPct = min(100.0, (block.costUSD / costBaseline) * 100.0)
-
-            // Token percentage - use personal max or 10M baseline
-            let tokenBaseline = Double(vm.maxTokensFromPreviousBlocks ?? 10_000_000)
-            let tokenPct = tokenBaseline > 0 ? min(100.0, (Double(block.tokenCounts.totalTokens) / tokenBaseline) * 100.0) : 0
-
-            // Use the higher percentage (critical limit)
-            return max(tokenPct, costPct)
-        } else if let activeSession = vm.activeClaudeSession {
-            // Have active session but no block - use session data
-            // This matches what the dropdown shows for currentTokens and currentCost
-            let costBaseline = 140.0
-            let costPct = min(100.0, (activeSession.cost / costBaseline) * 100.0)
-
-            let tokenBaseline = Double(vm.maxTokensFromPreviousBlocks ?? 10_000_000)
-            let tokenPct = tokenBaseline > 0 ? min(100.0, (Double(activeSession.tokens) / tokenBaseline) * 100.0) : 0
-
-            return max(tokenPct, costPct)
-        } else {
-            // No active session - use monthly data
-            let plan = settings.claudePlan
-            if plan != .free && plan.costLimit > 0 {
-                return min(100.0, (vm.costMonth / plan.costLimit) * 100.0)
-            }
-            return 0
-        }
     }
 
     @objc private func togglePopover(_ sender: Any?) {

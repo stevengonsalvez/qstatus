@@ -211,6 +211,9 @@ public actor QDBReader: DataSource {
                                                              fallbackChars: fallbackChars)
                     let tokens = TokenEstimator.estimateTokens(breakdown: breakdown)
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
+                    // Creating a dependency from QDBReader to PercentageCalculator would create a circular reference.
                     let rawUsage = ctxTokens > 0 ? (Double(tokens)/Double(ctxTokens))*100.0 : 0
                     let usage = tokens >= ctxTokens ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -227,6 +230,8 @@ public actor QDBReader: DataSource {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
                         let ctx = self.defaultContextWindow
                         // Cap at 99.9% unless truly at or above limit
+                        // Note: This percentage calculation remains here (not in PercentageCalculator)
+                        // because QDBReader is a foundation layer that PercentageCalculator depends on.
                         let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
@@ -252,6 +257,8 @@ public actor QDBReader: DataSource {
                     let est = TokenEstimator.estimate(from: value)
                     let ctx = est.contextWindow ?? self.defaultContextWindow
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(est.tokens)/Double(ctx))*100.0 : 0
                     let usage = est.tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -266,6 +273,8 @@ public actor QDBReader: DataSource {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
                         let ctx = self.defaultContextWindow
                         // Cap at 99.9% unless truly at or above limit
+                        // Note: This percentage calculation remains here (not in PercentageCalculator)
+                        // because QDBReader is a foundation layer that PercentageCalculator depends on.
                         let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
@@ -294,6 +303,8 @@ public actor QDBReader: DataSource {
                     let breakdown = TokenEstimator.estimateBreakdown(from: json)
                     let ctx = breakdown.contextWindow ?? self.defaultContextWindow
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(breakdown.totalTokens)/Double(ctx))*100.0 : 0
                     let usage = breakdown.totalTokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -388,6 +399,8 @@ public actor QDBReader: DataSource {
                     let ctx: Int = r["ctx"] ?? self.defaultContextWindow
                     let tokens = Int((((Double(chars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0.0
                     let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)

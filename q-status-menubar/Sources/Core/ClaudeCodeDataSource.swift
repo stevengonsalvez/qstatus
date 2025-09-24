@@ -117,6 +117,9 @@ public actor ClaudeCodeDataSource: DataSource {
     // Default context window for Claude models
     private let defaultContextWindow = 200_000
 
+    // Cached value for percentage calculations
+    private var cachedMaxTokensFromPreviousBlocks: Int? = nil
+
     // MARK: - Initialization
 
     public init(configPaths: [String] = [], costMode: CostMode = .auto) {
@@ -307,6 +310,9 @@ public actor ClaudeCodeDataSource: DataSource {
     ) async throws -> [SessionSummary] {
         try await openIfNeeded()
 
+        // Refresh the cached max tokens value
+        cachedMaxTokensFromPreviousBlocks = getMaxTokensFromPreviousBlocks()
+
         var summaries: [SessionSummary] = []
 
         // Sort sessions by end time (most recent first)
@@ -330,7 +336,16 @@ public actor ClaudeCodeDataSource: DataSource {
                 contextTokens = 0
             }
 
-            let usagePercent = Double(contextTokens) / Double(defaultContextWindow) * 100
+            // Get the current block for this session if it exists
+            let blocks = SessionBlockCalculator.identifySessionBlocks(entries: session.entries)
+            let currentBlock = blocks.first { $0.isActive } ?? blocks.last
+
+            // Use the new centralized calculator
+            let usagePercent = PercentageCalculator.calculateSessionPercentage(
+                session: session,
+                currentBlock: currentBlock,
+                maxTokensFromPreviousBlocks: cachedMaxTokensFromPreviousBlocks
+            )
             let state = getSessionState(usagePercent: usagePercent)
 
             // Use JSONL cost if available, otherwise fall back to calculated cost
@@ -373,7 +388,16 @@ public actor ClaudeCodeDataSource: DataSource {
             contextTokens = 0
         }
 
-        let usagePercent = Double(contextTokens) / Double(defaultContextWindow) * 100
+        // Get the current block for this session if it exists
+        let blocks = SessionBlockCalculator.identifySessionBlocks(entries: session.entries)
+        let currentBlock = blocks.first { $0.isActive } ?? blocks.last
+
+        // Use the new centralized calculator
+        let usagePercent = PercentageCalculator.calculateSessionPercentage(
+            session: session,
+            currentBlock: currentBlock,
+            maxTokensFromPreviousBlocks: cachedMaxTokensFromPreviousBlocks ?? getMaxTokensFromPreviousBlocks()
+        )
         let state = getSessionState(usagePercent: usagePercent)
 
         // Use JSONL cost if available, otherwise fall back to calculated cost
@@ -429,8 +453,17 @@ public actor ClaudeCodeDataSource: DataSource {
         let totalTokens = sessions.values.reduce(0) { $0 + $1.totalTokens }
 
         // Count sessions near limit (>80% usage)
+        let maxFromPrevious = cachedMaxTokensFromPreviousBlocks ?? getMaxTokensFromPreviousBlocks()
         let sessionsNearLimit = sessions.values.filter { session in
-            let usagePercent = Double(session.totalTokens) / Double(defaultContextWindow) * 100
+            // Get blocks for this session
+            let blocks = SessionBlockCalculator.identifySessionBlocks(entries: session.entries)
+            let currentBlock = blocks.first { $0.isActive } ?? blocks.last
+
+            let usagePercent = PercentageCalculator.calculateSessionPercentage(
+                session: session,
+                currentBlock: currentBlock,
+                maxTokensFromPreviousBlocks: maxFromPrevious
+            )
             return usagePercent > 80
         }.count
 

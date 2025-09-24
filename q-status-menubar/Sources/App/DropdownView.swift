@@ -1090,7 +1090,10 @@ extension DropdownView {
             // Use context window limit for percentage calculation
             // This matches what Claude Code Usage Monitor shows
             let contextWindow = viewModel.settings?.claudeTokenLimit ?? 200_000
-            let percent = Double(contextTokens) / Double(contextWindow) * 100
+            let percent = PercentageCalculator.calculateTokenPercentage(
+                tokens: contextTokens,
+                limit: contextWindow
+            )
 
             return (percent, contextTokens, cost)
         } else {
@@ -1189,12 +1192,13 @@ extension DropdownView {
     }
 
     fileprivate func messageQuotaColor(_ messages: Int) -> Color {
-        let quota = 5000
-        let percent = Double(messages) / Double(quota) * 100
-        if percent >= 90 { return .red }
-        if percent >= 75 { return .orange }
-        if percent >= 50 { return .yellow }
-        return .secondary
+        let colorName = PercentageCalculator.getMessageQuotaColor(messages: messages)
+        switch colorName {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        default: return .secondary
+        }
     }
 
     fileprivate func tokenLimitColor(_ percentage: Double) -> Color {
@@ -1417,12 +1421,13 @@ struct SessionDetailView: View {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: expanded)])
     }
     private func messageQuotaColor(_ messages: Int) -> Color {
-        let quota = 5000
-        let percent = Double(messages) / Double(quota) * 100
-        if percent >= 90 { return .red }
-        if percent >= 75 { return .orange }
-        if percent >= 50 { return .yellow }
-        return .secondary
+        let colorName = PercentageCalculator.getMessageQuotaColor(messages: messages)
+        switch colorName {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        default: return .secondary
+        }
     }
 }
 
@@ -1618,12 +1623,13 @@ struct AllSessionsSheet: View {
     private func formatTokens(_ t: Int) -> String { t >= 1000 ? "\(t/1000)k" : "\(t)" }
 
     private func messageQuotaColor(_ messages: Int) -> Color {
-        let quota = 5000
-        let percent = Double(messages) / Double(quota) * 100
-        if percent >= 90 { return .red }
-        if percent >= 75 { return .orange }
-        if percent >= 50 { return .yellow }
-        return .secondary
+        let colorName = PercentageCalculator.getMessageQuotaColor(messages: messages)
+        switch colorName {
+        case "red": return .red
+        case "orange": return .orange
+        case "yellow": return .yellow
+        default: return .secondary
+        }
     }
 }
 
@@ -2001,27 +2007,47 @@ struct ClaudeCodeUsageView: View {
         return nil
     }
 
-    // Percentages
+    // Percentages - Use centralized calculator
     private var tokenPercentage: Double {
-        // For active blocks, compare against personal max or a reasonable baseline
-        if viewModel.activeClaudeSession?.currentBlock != nil {
-            // Use personal max from previous blocks if available, otherwise use 10M as baseline
-            let baseline = (viewModel.maxTokensFromPreviousBlocks ?? 10_000_000)
-            return baseline > 0 ? min(100, (Double(currentTokens) / Double(baseline)) * 100) : 0
+        if let activeSession = viewModel.activeClaudeSession,
+           let block = activeSession.currentBlock {
+            return PercentageCalculator.calculateTokenPercentage(
+                tokens: block.tokenCounts.totalTokens,
+                maxFromPrevious: viewModel.maxTokensFromPreviousBlocks
+            )
+        } else if let activeSession = viewModel.activeClaudeSession {
+            return PercentageCalculator.calculateTokenPercentage(
+                tokens: activeSession.tokens,
+                maxFromPrevious: viewModel.maxTokensFromPreviousBlocks
+            )
         } else {
             // For monthly view, use token limit
-            return tokenLimit > 0 ? min(100, (Double(currentTokens) / Double(tokenLimit)) * 100) : 0
+            return PercentageCalculator.calculateTokenPercentage(
+                tokens: currentTokens,
+                limit: tokenLimit
+            )
         }
     }
 
     private var costPercentage: Double {
-        // For active blocks, compare against $140 baseline (reasonable daily budget)
-        if viewModel.activeClaudeSession?.currentBlock != nil {
-            let costBaseline = 140.0  // $140 per block is a reasonable heavy usage baseline
-            return min(100, (currentCost / costBaseline) * 100)
+        if let activeSession = viewModel.activeClaudeSession,
+           let block = activeSession.currentBlock {
+            return PercentageCalculator.calculateCostPercentage(
+                cost: block.costUSD,
+                useBlockBaseline: true
+            )
+        } else if let activeSession = viewModel.activeClaudeSession {
+            return PercentageCalculator.calculateCostPercentage(
+                cost: activeSession.cost,
+                useBlockBaseline: true
+            )
         } else {
             // For monthly view, use cost limit
-            return costLimit > 0 ? min(100, (currentCost / costLimit) * 100) : 0
+            return PercentageCalculator.calculateCostPercentage(
+                cost: currentCost,
+                useBlockBaseline: false,
+                monthlyLimit: costLimit
+            )
         }
     }
 

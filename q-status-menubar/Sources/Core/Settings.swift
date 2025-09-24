@@ -128,7 +128,11 @@ public final class SettingsStore: ObservableObject {
     }
 
     public func claudeTokenLimitPercentage(currentTokens: Int) -> Double {
-        return (Double(currentTokens) / Double(claudeTokenLimit)) * 100.0
+        return PercentageCalculator.calculateTokenPercentage(
+            tokens: currentTokens,
+            limit: claudeTokenLimit,
+            cappedAt100: false
+        )
     }
 
     public init() {

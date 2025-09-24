@@ -84,9 +84,25 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 } catch {
                     // TODO: surface error state
                 }
-                // Adaptive polling based on stability
+                // Adaptive polling based on stability and activity
                 let base = max(1, self.settings.refreshIntervalSeconds)
-                let interval = min(5, base + min(2, self.stableCycles))
+
+                // Activity-based polling: 3s during active sessions, 10s when idle
+                let activityInterval: Int
+                if let activeSession = self.activeClaudeSession,
+                   activeSession.lastActivity.timeIntervalSinceNow > -300 { // Active within last 5 minutes
+                    activityInterval = 3 // Faster polling during active sessions
+                } else {
+                    activityInterval = 10 // Slower polling when idle
+                }
+
+                // Use stability-based interval with a base of 5 seconds (instead of 3)
+                // This increases from 5s to 7s as data stabilizes
+                let stabilityInterval = min(7, 5 + min(2, self.stableCycles))
+
+                // Use the minimum of activity and stability intervals
+                let interval = min(activityInterval, stabilityInterval)
+
                 try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
             }
         }
@@ -217,9 +233,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
             // Use 175k base for context usage percent (per Q CLI display)
             let contextBase = 175_000
-            // Cap at 99.9% unless truly at or above limit
-            let rawUsage = (Double(s.tokensUsed)/Double(contextBase))*100.0
-            let usage175 = s.tokensUsed >= contextBase ? 100.0 : min(99.9, max(0.0, rawUsage))
+            // Use PercentageCalculator for consistent percentage calculation
+            let usage175 = PercentageCalculator.calculateTokenPercentage(tokens: s.tokensUsed, limit: contextBase)
             return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: contextBase, usagePercent: usage175, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
         }
         viewModel.sessions = mapped
@@ -414,9 +429,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         if let details = try? await self.reader.fetchSessionDetail(key: s.id) {
                             let ctxBase = 175_000
                             let tokens = details.summary.tokensUsed
-                            // Cap at 99.9% unless truly at or above limit
-                            let rawUsage = (Double(tokens)/Double(ctxBase))*100.0
-                            let usage = tokens >= ctxBase ? 100.0 : min(99.9, max(0.0, rawUsage))
+                            // Use PercentageCalculator for consistent percentage calculation
+                            let usage = PercentageCalculator.calculateTokenPercentage(tokens: tokens, limit: ctxBase)
                             let cwd = details.summary.cwd
                             let rate = self.settings.modelPricing[details.summary.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
                             let cost = CostEstimator.estimateUSD(tokens: tokens, ratePer1k: rate)
@@ -436,7 +450,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
     private func refreshActiveClaudeSession() async {
         // Only fetch active session for Claude Code data source
         guard settings.dataSourceType == .claudeCode else {
-            await MainActor.run { viewModel.activeClaudeSession = nil }
+            await MainActor.run {
+                viewModel.activeClaudeSession = nil
+            }
             return
         }
 
@@ -445,6 +461,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             do {
                 let activeSession = try await claudeReader.fetchActiveSession()
                 let maxTokens = await claudeReader.getMaxTokensFromPreviousBlocks()
+
+                // Make all updates atomic
                 await MainActor.run {
                     viewModel.activeClaudeSession = activeSession
                     viewModel.maxTokensFromPreviousBlocks = maxTokens
