@@ -91,29 +91,42 @@ final class MenuBarController: NSObject {
                 let plan = settings.claudePlan
                 if plan != .free {
                     // Check if we have an active Claude session with a block
-                    var costPct: Double = 0
-                    var costDisplay: String = ""
-                    var limitDisplay: String = ""
+                    var criticalPct: Double = 0
+                    var displayText: String = ""
 
                     if let activeSession = vm.activeClaudeSession,
                        let block = activeSession.currentBlock {
-                        // Active block - compare against $140 baseline
+                        // Active block - calculate both token and cost percentages, use the higher one
                         let costBaseline = 140.0
-                        costPct = min(100.0, (block.costUSD / costBaseline) * 100.0)
-                        costDisplay = CostEstimator.formatUSD(block.costUSD)
-                        limitDisplay = "$140.00"
-                        tooltip = "Claude Block \(activeSession.blockNumber): \(costDisplay)/\(limitDisplay) (\(Int(costPct))%)"
+                        let costPct = min(100.0, (block.costUSD / costBaseline) * 100.0)
+
+                        // Token percentage - use personal max or 10M baseline
+                        let tokenBaseline = Double(vm.maxTokensFromPreviousBlocks ?? 10_000_000)
+                        let tokenPct = tokenBaseline > 0 ? min(100.0, (Double(block.tokenCounts.totalTokens) / tokenBaseline) * 100.0) : 0
+
+                        // Use the higher percentage (critical limit)
+                        criticalPct = max(tokenPct, costPct)
+
+                        // Determine which metric is critical for the tooltip
+                        if criticalPct == tokenPct {
+                            let tokenDisplay = formatTokenCount(block.tokenCounts.totalTokens)
+                            let limitDisplay = formatTokenCount(Int(tokenBaseline))
+                            tooltip = "Claude Block \(activeSession.blockNumber): \(tokenDisplay)/\(limitDisplay) tokens (\(Int(criticalPct))%)"
+                        } else {
+                            let costDisplay = CostEstimator.formatUSD(block.costUSD)
+                            tooltip = "Claude Block \(activeSession.blockNumber): \(costDisplay)/$140.00 (\(Int(criticalPct))%)"
+                        }
                     } else {
-                        // No active block - show monthly usage
-                        costPct = plan.costLimit > 0 ? min(100.0, (vm.costMonth / plan.costLimit) * 100.0) : 0
-                        costDisplay = CostEstimator.formatUSD(vm.costMonth)
-                        limitDisplay = CostEstimator.formatUSD(plan.costLimit)
-                        tooltip = "Claude \(plan.displayName): \(costDisplay)/\(limitDisplay) (\(Int(costPct))%)"
+                        // No active block - show monthly usage (cost-based)
+                        criticalPct = plan.costLimit > 0 ? min(100.0, (vm.costMonth / plan.costLimit) * 100.0) : 0
+                        let costDisplay = CostEstimator.formatUSD(vm.costMonth)
+                        let limitDisplay = CostEstimator.formatUSD(plan.costLimit)
+                        tooltip = "Claude \(plan.displayName): \(costDisplay)/\(limitDisplay) (\(Int(criticalPct))%)"
                     }
 
-                    percent = Int(costPct.rounded())
-                    state = (costPct >= 95 ? .critical : (costPct >= 80 ? .warning : (costPct <= 0 ? .idle : .healthy)))
-                    labelOverride = "\(Int(round(costPct)))%"
+                    percent = Int(criticalPct.rounded())
+                    state = (criticalPct >= 95 ? .critical : (criticalPct >= 80 ? .warning : (criticalPct <= 0 ? .idle : .healthy)))
+                    labelOverride = "\(Int(round(criticalPct)))%"
                 } else {
                     // Free plan
                     percent = 0
@@ -159,6 +172,15 @@ final class MenuBarController: NSObject {
     private func cwdTail(_ p: String) -> String { (p as NSString).lastPathComponent }
     private func mapState(_ s: SessionState) -> HealthState {
         switch s { case .critical: return .critical; case .warn: return .warning; default: return .healthy }
+    }
+    private func formatTokenCount(_ tokens: Int) -> String {
+        if tokens >= 1_000_000 {
+            return String(format: "%.1fM", Double(tokens) / 1_000_000)
+        } else if tokens >= 1000 {
+            return String(format: "%.1fK", Double(tokens) / 1_000)
+        } else {
+            return "\(tokens)"
+        }
     }
 
     @objc private func togglePopover(_ sender: Any?) {
