@@ -1960,15 +1960,23 @@ struct ClaudeCodeUsageView: View {
 
     // Current values
     private var currentTokens: Int {
-        if let activeSession = viewModel.activeClaudeSession {
-            return activeSession.tokens  // Use context tokens, not cumulative
+        if let activeSession = viewModel.activeClaudeSession,
+           let block = activeSession.currentBlock {
+            // Use the block's total tokens for percentage calculation
+            return block.tokenCounts.totalTokens
+        } else if let activeSession = viewModel.activeClaudeSession {
+            return activeSession.tokens  // Fallback to context tokens
         } else {
             return 0  // No active session means no current context
         }
     }
 
     private var currentCost: Double {
-        if let activeSession = viewModel.activeClaudeSession {
+        if let activeSession = viewModel.activeClaudeSession,
+           let block = activeSession.currentBlock {
+            // Use the block's cost for percentage calculation
+            return block.costUSD
+        } else if let activeSession = viewModel.activeClaudeSession {
             return activeSession.cost
         } else {
             return viewModel.costMonth
@@ -1995,11 +2003,26 @@ struct ClaudeCodeUsageView: View {
 
     // Percentages
     private var tokenPercentage: Double {
-        tokenLimit > 0 ? min(100, (Double(currentTokens) / Double(tokenLimit)) * 100) : 0
+        // For active blocks, compare against personal max or a reasonable baseline
+        if viewModel.activeClaudeSession?.currentBlock != nil {
+            // Use personal max from previous blocks if available, otherwise use 10M as baseline
+            let baseline = (viewModel.maxTokensFromPreviousBlocks ?? 10_000_000)
+            return baseline > 0 ? min(100, (Double(currentTokens) / Double(baseline)) * 100) : 0
+        } else {
+            // For monthly view, use token limit
+            return tokenLimit > 0 ? min(100, (Double(currentTokens) / Double(tokenLimit)) * 100) : 0
+        }
     }
 
     private var costPercentage: Double {
-        costLimit > 0 ? min(100, (currentCost / costLimit) * 100) : 0
+        // For active blocks, compare against $140 baseline (reasonable daily budget)
+        if viewModel.activeClaudeSession?.currentBlock != nil {
+            let costBaseline = 140.0  // $140 per block is a reasonable heavy usage baseline
+            return min(100, (currentCost / costBaseline) * 100)
+        } else {
+            // For monthly view, use cost limit
+            return costLimit > 0 ? min(100, (currentCost / costLimit) * 100) : 0
+        }
     }
 
     // Critical limit analysis (only tokens and cost - messages are informational)
@@ -2155,20 +2178,27 @@ struct ClaudeCodeUsageView: View {
                                     label: "Tokens",
                                     icon: "number",
                                     current: currentTokens,
-                                    limit: tokenLimit,
+                                    limit: viewModel.activeClaudeSession?.currentBlock != nil ?
+                                           (viewModel.maxTokensFromPreviousBlocks ?? 10_000_000) : tokenLimit,
                                     percentage: tokenPercentage,
                                     formatter: formatTokens
                                 )
-                                .help("Comparing against personal max usage from previous sessions")
+                                .help(viewModel.activeClaudeSession?.currentBlock != nil ?
+                                      "Current block vs personal max (\(formatTokens(viewModel.maxTokensFromPreviousBlocks ?? 10_000_000)))" :
+                                      "Monthly usage vs plan limit")
 
                                 // Cost usage bar
                                 UsageProgressBar(
                                     label: "Cost",
                                     icon: "dollarsign.circle",
                                     currentText: CostEstimator.formatUSD(currentCost),
-                                    limitText: CostEstimator.formatUSD(costLimit),
+                                    limitText: viewModel.activeClaudeSession?.currentBlock != nil ?
+                                              "$140.00" : CostEstimator.formatUSD(costLimit),
                                     percentage: costPercentage
                                 )
+                                .help(viewModel.activeClaudeSession?.currentBlock != nil ?
+                                      "Current block cost vs $140 baseline" :
+                                      "Monthly cost vs plan limit")
 
                                 // Message count display
                                 HStack {

@@ -90,11 +90,30 @@ final class MenuBarController: NSObject {
             if settings.dataSourceType == .claudeCode {
                 let plan = settings.claudePlan
                 if plan != .free {
-                let costPct = plan.costLimit > 0 ? min(100.0, (vm.costMonth / plan.costLimit) * 100.0) : 0
-                percent = Int(costPct.rounded())
-                state = (costPct >= 95 ? .critical : (costPct >= 80 ? .warning : (costPct <= 0 ? .idle : .healthy)))
-                labelOverride = "\(Int(round(costPct)))%"
-                tooltip = "Claude \(plan.displayName): \(CostEstimator.formatUSD(vm.costMonth))/\(CostEstimator.formatUSD(plan.costLimit)) (\(Int(costPct))%)"
+                    // Check if we have an active Claude session with a block
+                    var costPct: Double = 0
+                    var costDisplay: String = ""
+                    var limitDisplay: String = ""
+
+                    if let activeSession = vm.activeClaudeSession,
+                       let block = activeSession.currentBlock {
+                        // Active block - compare against $140 baseline
+                        let costBaseline = 140.0
+                        costPct = min(100.0, (block.costUSD / costBaseline) * 100.0)
+                        costDisplay = CostEstimator.formatUSD(block.costUSD)
+                        limitDisplay = "$140.00"
+                        tooltip = "Claude Block \(activeSession.blockNumber): \(costDisplay)/\(limitDisplay) (\(Int(costPct))%)"
+                    } else {
+                        // No active block - show monthly usage
+                        costPct = plan.costLimit > 0 ? min(100.0, (vm.costMonth / plan.costLimit) * 100.0) : 0
+                        costDisplay = CostEstimator.formatUSD(vm.costMonth)
+                        limitDisplay = CostEstimator.formatUSD(plan.costLimit)
+                        tooltip = "Claude \(plan.displayName): \(costDisplay)/\(limitDisplay) (\(Int(costPct))%)"
+                    }
+
+                    percent = Int(costPct.rounded())
+                    state = (costPct >= 95 ? .critical : (costPct >= 80 ? .warning : (costPct <= 0 ? .idle : .healthy)))
+                    labelOverride = "\(Int(round(costPct)))%"
                 } else {
                     // Free plan
                     percent = 0
