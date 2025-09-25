@@ -36,69 +36,89 @@ struct DropdownView: View {
     @State private var topSort: TopSort = .tokens
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Plan selector for Claude Code users
-            if viewModel.settings?.dataSourceType == .claudeCode {
-                claudePlanSelector
-                Divider()
-            }
-
-            // Global header with totals
-            globalHeaderSection
-
-            // Active Claude Code Session and Plan Usage
-            if viewModel.settings?.dataSourceType == .claudeCode {
-                claudeCodeSection
-            }
-
-            Divider()
-
-            // Recent Sessions header block
-            recentSessionsSection
-
-            Divider()
-
-            // Compact view - show only 3 recent sessions
-            compactSessionsList
-
-            Divider()
-
-            // View Dashboard button for detailed analytics
-            HStack {
-                Spacer()
-                Button(action: { viewModel.showAllSheet = true }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 12))
-                        Text("View Dashboard")
-                            .font(.system(size: 12, weight: .medium))
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 10))
-                    }
-                    .foregroundStyle(.blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.05)))
-                    )
+        VStack(alignment: .leading, spacing: 0) {
+            // Fixed Header
+            VStack(alignment: .leading, spacing: 12) {
+                // Plan selector for Claude Code users
+                if viewModel.settings?.dataSourceType == .claudeCode {
+                    claudePlanSelector
+                    Divider()
                 }
-                .buttonStyle(PlainButtonStyle())
-                .help("Open full dashboard with analytics and all sessions (⌘⇧Q)")
-                Spacer()
+
+                // Global header with totals
+                globalHeaderSection
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
 
-            // Provider selector
-            providerSelectorSection
+            // Scrollable Middle Content
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Active Claude Code Session and Plan Usage
+                    if viewModel.settings?.dataSourceType == .claudeCode {
+                        claudeCodeSection
+                    }
 
-            Divider()
+                    Divider()
 
-            // Control buttons
-            controlButtonsSection
+                    // Recent Sessions header block
+                    recentSessionsSection
+
+                    Divider()
+
+                    // Compact view - show only 3 recent sessions
+                    compactSessionsList
+
+                    Divider()
+
+                    // View Dashboard button for detailed analytics
+                    HStack {
+                        Spacer()
+                        Button(action: { viewModel.showAllSheet = true }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                                    .font(.system(size: 12))
+                                Text("View Dashboard")
+                                    .font(.system(size: 12, weight: .medium))
+                                Image(systemName: "arrow.up.forward.app")
+                                    .font(.system(size: 10))
+                            }
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.05)))
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help("Open full dashboard with analytics and all sessions (⌘⇧Q)")
+                        Spacer()
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+            }
+            .frame(maxHeight: 400) // Allow more space but still scroll if needed
+
+            // Fixed Footer
+            VStack(alignment: .leading, spacing: 12) {
+                // Provider selector
+                providerSelectorSection
+
+                Divider()
+
+                // Control buttons
+                controlButtonsSection
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
+            .padding(.top, 6)
         }
-        .padding(14)
         .frame(width: 500)
+        .frame(maxHeight: 600)
         .sheet(item: Binding(get: { viewModel.selectedSession }, set: { _ in viewModel.selectedSession = nil })) { details in
             SessionDetailView(details: details, messagesMonth: viewModel.messagesMonth)
                 .frame(width: 420, height: 400)

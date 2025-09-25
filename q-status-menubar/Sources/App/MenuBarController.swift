@@ -190,7 +190,7 @@ final class MenuBarController: NSObject {
             let controller = NSHostingController(rootView: view)
             hostingController = controller
             popover.contentViewController = controller
-            popover.contentSize = NSSize(width: 700, height: 350)
+            popover.contentSize = NSSize(width: 500, height: 600)
         }
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
