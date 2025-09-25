@@ -1875,14 +1875,21 @@ struct BurnRateView: View {
                                 color: costPrediction.color
                             ))
                         }
-                    } else if projectedSessionCost > sessionLimit * 1.5 {
-                        // Already significantly over limit
-                        predictions.append(Prediction(
-                            type: "cost",
-                            text: "Cost limit exceeded!",
-                            icon: "exclamationmark.octagon.fill",
-                            color: .red
-                        ))
+                    } else {
+                        // Use the same calculation as the percentage display
+                        let costPercentage = PercentageCalculator.calculateCostPercentage(
+                            cost: projectedSessionCost,
+                            useBlockBaseline: true
+                        )
+                        if costPercentage > 100 {
+                            // Cost actually exceeded the $140 baseline
+                            predictions.append(Prediction(
+                                type: "cost",
+                                text: "Cost limit exceeded!",
+                                icon: "exclamationmark.octagon.fill",
+                                color: .red
+                            ))
+                        }
                     }
                 }
             }
