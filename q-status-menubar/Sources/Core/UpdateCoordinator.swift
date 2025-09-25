@@ -69,7 +69,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         self.lastDataVersion = dv
                         self.stableCycles = 0
                         let snapshot = try await self.reader.fetchLatestUsage()
-                        await self.append(snapshot: snapshot)
+                        await self.append(snapshot: snapshot, notifyUI: false) // Don't notify yet
                         // Also refresh session list (first page)
                         if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: false) {
                             await self.applySessions(sessions)
@@ -78,6 +78,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         await self.refreshGlobalTotals()
                         // Refresh active Claude Code session if applicable
                         await self.refreshActiveClaudeSession()
+                        // Batch UI update - notify once after all refreshes
+                        await MainActor.run { self.onUIUpdate?(self.viewModel) }
                     } else {
                         self.stableCycles += 1
                     }
@@ -85,7 +87,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     // TODO: surface error state
                 }
                 // Adaptive polling based on stability and activity
-                let base = max(1, self.settings.refreshIntervalSeconds)
+                _ = max(1, self.settings.refreshIntervalSeconds) // Base interval (not currently used)
 
                 // Activity-based polling: 3s during active sessions, 10s when idle
                 let activityInterval: Int
@@ -114,12 +116,14 @@ public final class UpdateCoordinator: @unchecked Sendable {
             guard let self else { return }
             do {
                 let snapshot = try await self.reader.fetchLatestUsage()
-                await self.append(snapshot: snapshot)
+                await self.append(snapshot: snapshot, notifyUI: false) // Don't notify yet
                 if let sessions = try? await self.reader.fetchSessions(limit: 50, offset: self.sessionsPage * 50, groupByFolder: self.settings.groupByFolder, activeOnly: false) {
                     await self.applySessions(sessions)
                 }
                 await self.refreshGlobalTotals()
                 await self.refreshActiveClaudeSession()
+                // Batch UI update - notify once after all refreshes
+                await MainActor.run { self.onUIUpdate?(self.viewModel) }
             } catch { /* ignore */ }
         }
     }
@@ -166,7 +170,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
     deinit { timerTask?.cancel() }
 
     @MainActor
-    private func append(snapshot: UsageSnapshot) async {
+    private func append(snapshot: UsageSnapshot, notifyUI: Bool = true) async {
         history.append(snapshot)
         if history.count > 360 { history.removeFirst(history.count - 360) }
 
@@ -191,7 +195,9 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 await Notifier.notifyThreshold(percent, level: .seventy)
             }
         }
-        onUIUpdate?(viewModel)
+        if notifyUI {
+            onUIUpdate?(viewModel)
+        }
     }
 
     private func historySuffixNormalized() -> [Double] {
@@ -361,7 +367,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 lastGlobalRateAt = now
                 lastGlobalTokens = finalTotalTokens
                 // Snapshot-delta accumulation for Today/Week/Month (approximate)
-                let delta = max(0, finalTotalTokens - (viewModel._lastGlobalTotalTokens ?? 0))
+                _ = max(0, finalTotalTokens - (viewModel._lastGlobalTotalTokens ?? 0)) // Delta not used (precise values from fetchPeriodTokensByModel)
                 viewModel._lastGlobalTotalTokens = finalTotalTokens
                 let now2 = Date()
                 if Calendar.current.isDateInToday(viewModel._lastTotalsDate ?? now2) == false {
