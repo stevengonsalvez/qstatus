@@ -1084,21 +1084,23 @@ extension DropdownView {
     }
 
     private func calculateSessionBlockPercentage(plan: ClaudePlan) -> (percent: Double, tokens: Int, cost: Double) {
+        // Use the exact same calculation as the status bar for consistency
+        let monthlyData = viewModel.settings?.claudePlan.costLimit ?? 0 > 0 ?
+            (cost: viewModel.costMonth, limit: viewModel.settings?.claudePlan.costLimit ?? 0) : nil
+
+        // This is the SAME calculation used in MenuBarController.swift
+        let percent = PercentageCalculator.calculateCriticalPercentage(
+            activeSession: viewModel.activeClaudeSession,
+            maxTokensFromPreviousBlocks: viewModel.maxTokensFromPreviousBlocks,
+            monthlyData: monthlyData
+        )
+
         if let activeSession = viewModel.activeClaudeSession {
-            // For the current 5-hour session block, show block cost vs $140 baseline
             let contextTokens = activeSession.tokens
             let cost = activeSession.currentBlock?.costUSD ?? activeSession.cost
-
-            // Calculate cost percentage against $140 baseline
-            let percent = PercentageCalculator.calculateCostPercentage(
-                cost: cost,
-                useBlockBaseline: true
-            )
-
             return (percent, contextTokens, cost)
         } else {
-            // No active session
-            return (0, 0, 0)
+            return (percent, 0, 0)
         }
     }
 
