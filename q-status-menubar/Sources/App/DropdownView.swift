@@ -1085,9 +1085,9 @@ extension DropdownView {
 
     private func calculateSessionBlockPercentage(plan: ClaudePlan) -> (percent: Double, tokens: Int, cost: Double) {
         if let activeSession = viewModel.activeClaudeSession {
-            // For the current 5-hour session block, show cost vs $140 baseline
+            // For the current 5-hour session block, show block cost vs $140 baseline
             let contextTokens = activeSession.tokens
-            let cost = activeSession.cost
+            let cost = activeSession.currentBlock?.costUSD ?? activeSession.cost
 
             // Calculate cost percentage against $140 baseline
             let percent = PercentageCalculator.calculateCostPercentage(
