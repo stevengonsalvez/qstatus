@@ -1085,19 +1085,14 @@ extension DropdownView {
 
     private func calculateSessionBlockPercentage(plan: ClaudePlan) -> (percent: Double, tokens: Int, cost: Double) {
         if let activeSession = viewModel.activeClaudeSession {
-            // For the current 5-hour session block, we need to show:
-            // - The context usage (tokens currently in memory)
-            // - Against the context window limit (200K for most models)
+            // For the current 5-hour session block, show cost vs $140 baseline
+            let contextTokens = activeSession.tokens
+            let cost = activeSession.cost
 
-            let contextTokens = activeSession.tokens  // Current context tokens (not cumulative)
-            let cost = activeSession.cost  // Session cost
-
-            // Use context window limit for percentage calculation
-            // This matches what Claude Code Usage Monitor shows
-            let contextWindow = viewModel.settings?.claudeTokenLimit ?? 200_000
-            let percent = PercentageCalculator.calculateTokenPercentage(
-                tokens: contextTokens,
-                limit: contextWindow
+            // Calculate cost percentage against $140 baseline
+            let percent = PercentageCalculator.calculateCostPercentage(
+                cost: cost,
+                useBlockBaseline: true
             )
 
             return (percent, contextTokens, cost)
@@ -1110,7 +1105,6 @@ extension DropdownView {
     @ViewBuilder
     private func sessionBlockPercentageView(plan: ClaudePlan) -> some View {
         let sessionData = calculateSessionBlockPercentage(plan: plan)
-        let contextWindow = viewModel.settings?.claudeTokenLimit ?? 200_000
 
         VStack(spacing: 2) {
             Text("\(Int(sessionData.percent))%")
@@ -1121,7 +1115,7 @@ extension DropdownView {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
         }
-        .help("Session context usage: \(formatTokens(sessionData.tokens)) of \(formatTokens(contextWindow)) tokens • Session cost: \(CostEstimator.formatUSD(sessionData.cost))")
+        .help("Session cost: \(CostEstimator.formatUSD(sessionData.cost)) vs $140.00 baseline • Context tokens: \(formatTokens(sessionData.tokens))")
     }
 
     fileprivate func costPercentColor(_ percent: Double) -> Color {

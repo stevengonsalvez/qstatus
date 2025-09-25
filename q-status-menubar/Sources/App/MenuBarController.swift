@@ -50,26 +50,14 @@ final class MenuBarController: NSObject {
         var labelOverride: String? = nil
         var tooltip = "Q-Status"
 
-        // Calculate session context percentage to match dropdown display
-        // This shows how full Claude's context window is (memory usage)
-        let criticalPct: Double
-        if let activeSession = vm.activeClaudeSession {
-            // Active session: show context usage (same as dropdown's "Overall")
-            let contextWindow = settings.claudeTokenLimit
-            criticalPct = PercentageCalculator.calculateTokenPercentage(
-                tokens: activeSession.tokens,
-                limit: contextWindow
-            )
-        } else if vm.tokensMonth > 0 && settings.claudePlan.tokenLimit > 0 {
-            // No active session: show monthly token usage as fallback
-            criticalPct = PercentageCalculator.calculateTokenPercentage(
-                tokens: vm.tokensMonth,
-                limit: settings.claudePlan.tokenLimit
-            )
-        } else {
-            // No data available
-            criticalPct = 0
-        }
+        // Use centralized calculator for consistency
+        let monthlyData = settings.claudePlan.costLimit > 0 ?
+            (cost: vm.costMonth, limit: settings.claudePlan.costLimit) : nil
+        let criticalPct = PercentageCalculator.calculateCriticalPercentage(
+            activeSession: vm.activeClaudeSession,
+            maxTokensFromPreviousBlocks: vm.maxTokensFromPreviousBlocks,
+            monthlyData: monthlyData
+        )
 
         switch settings.iconMode {
         case .mostRecent:
