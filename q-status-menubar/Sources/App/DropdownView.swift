@@ -477,7 +477,7 @@ struct DropdownView: View {
 
             if !recentSessions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Recent Sessions")
+                    Text("Context: Recent sessions")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -970,6 +970,11 @@ struct DropdownView: View {
         HStack {
             Button("Preferences…") { viewModel.openPreferences() }
             Spacer()
+            Button(action: { viewModel.forceRefresh?() }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12))
+            }
+            .help("Refresh now")
             Button(viewModel.isPaused ? "Resume" : "Pause") { viewModel.togglePause() }
             Button("Quit") { viewModel.quit() }
         }

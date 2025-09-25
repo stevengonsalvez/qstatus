@@ -546,7 +546,19 @@ public actor ClaudeCodeDataSource: DataSource {
                 guard let entryDate = entry.date else { continue }
 
                 let entryTokens = entry.message.usage.totalTokens
-                let entryCost = entry.costUSD ?? 0.0
+                let entryCost: Double
+                if let jsonlCost = entry.costUSD, jsonlCost > 0 {
+                    entryCost = jsonlCost
+                } else {
+                    // Calculate cost using ClaudeCostCalculator when JSONL cost is missing
+                    let model = entry.message.model ?? "claude-3-5-sonnet-20241022"
+                    entryCost = ClaudeCostCalculator.calculateCost(
+                        tokens: entry.message.usage,
+                        model: model,
+                        mode: costMode,
+                        existingCost: entry.costUSD
+                    )
+                }
 
                 // Count this entry in the appropriate periods
                 if entryDate >= startOfDay {
