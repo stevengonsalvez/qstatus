@@ -52,7 +52,7 @@ struct DropdownView: View {
             .padding(.top, 14)
             .padding(.bottom, 6)
 
-            // Scrollable Middle Content
+            // Scrollable Middle Content with visible scrollbar
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 12) {
                     // Active Claude Code Session and Plan Usage
@@ -101,7 +101,21 @@ struct DropdownView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
             }
-            .frame(maxHeight: 400) // Allow more space but still scroll if needed
+            .frame(maxHeight: 700) // Allow much more space but still scroll if needed
+            .background(
+                // Add a subtle background to highlight scrollable area
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.gray.opacity(0.05))
+            )
+            .overlay(
+                // Add a colored border on the right where scrollbar appears
+                HStack {
+                    Spacer()
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.3))
+                        .frame(width: 2)
+                }
+            )
 
             // Fixed Footer
             VStack(alignment: .leading, spacing: 12) {
@@ -118,7 +132,7 @@ struct DropdownView: View {
             .padding(.top, 6)
         }
         .frame(width: 500)
-        .frame(maxHeight: 600)
+        .frame(maxHeight: 900)
         .sheet(item: Binding(get: { viewModel.selectedSession }, set: { _ in viewModel.selectedSession = nil })) { details in
             SessionDetailView(details: details, messagesMonth: viewModel.messagesMonth)
                 .frame(width: 420, height: 400)

@@ -99,34 +99,41 @@ final class MenuBarController: NSObject {
             if settings.dataSourceType == .claudeCode {
                 let plan = settings.claudePlan
                 if plan != .free {
-                    // Use the same critical percentage calculation from the top
-                    percent = Int(criticalPct.rounded())
-                    state = (criticalPct >= 95 ? .critical : (criticalPct >= 80 ? .warning : (criticalPct <= 0 ? .idle : .healthy)))
-                    labelOverride = "\(percent)%"
+                    // Check if there's an active session
+                    if let activeSession = vm.activeClaudeSession {
+                        // Active session exists - calculate percentage normally
+                        percent = Int(criticalPct.rounded())
+                        state = (criticalPct >= 95 ? .critical : (criticalPct >= 80 ? .warning : (criticalPct <= 0 ? .idle : .healthy)))
+                        labelOverride = "\(percent)%"
 
-                    // Build appropriate tooltip based on what we have
-                    if let activeSession = vm.activeClaudeSession,
-                       let block = activeSession.currentBlock {
-                        // Use centralized calculator to determine which metric is critical
-                        let metric = PercentageCalculator.getCriticalMetric(
-                            activeSession: activeSession,
-                            maxTokensFromPreviousBlocks: vm.maxTokensFromPreviousBlocks
-                        )
+                        // Build appropriate tooltip based on what we have
+                        if let block = activeSession.currentBlock {
+                            // Use centralized calculator to determine which metric is critical
+                            let metric = PercentageCalculator.getCriticalMetric(
+                                activeSession: activeSession,
+                                maxTokensFromPreviousBlocks: vm.maxTokensFromPreviousBlocks
+                            )
 
-                        if metric.isTokenCritical {
-                            let tokenBaseline = vm.maxTokensFromPreviousBlocks ?? 10_000_000
-                            let tokenDisplay = PercentageCalculator.formatTokens(block.tokenCounts.totalTokens)
-                            let limitDisplay = PercentageCalculator.formatTokens(tokenBaseline)
-                            tooltip = "Claude Block \(activeSession.blockNumber): \(tokenDisplay)/\(limitDisplay) tokens (\(percent)%)"
+                            if metric.isTokenCritical {
+                                let tokenBaseline = vm.maxTokensFromPreviousBlocks ?? 10_000_000
+                                let tokenDisplay = PercentageCalculator.formatTokens(block.tokenCounts.totalTokens)
+                                let limitDisplay = PercentageCalculator.formatTokens(tokenBaseline)
+                                tooltip = "Claude Block \(activeSession.blockNumber): \(tokenDisplay)/\(limitDisplay) tokens (\(percent)%)"
+                            } else {
+                                let costDisplay = CostEstimator.formatUSD(block.costUSD)
+                                tooltip = "Claude Block \(activeSession.blockNumber): \(costDisplay)/$140.00 (\(percent)%)"
+                            }
                         } else {
-                            let costDisplay = CostEstimator.formatUSD(block.costUSD)
-                            tooltip = "Claude Block \(activeSession.blockNumber): \(costDisplay)/$140.00 (\(percent)%)"
+                            // Active session but no block
+                            let costDisplay = CostEstimator.formatUSD(activeSession.cost)
+                            tooltip = "Claude Session: \(costDisplay) (\(percent)%)"
                         }
                     } else {
-                        // No active block - show monthly usage
-                        let costDisplay = CostEstimator.formatUSD(vm.costMonth)
-                        let limitDisplay = CostEstimator.formatUSD(plan.costLimit)
-                        tooltip = "Claude \(plan.displayName): \(costDisplay)/\(limitDisplay) (\(percent)%)"
+                        // No active session - show idle state
+                        percent = 0
+                        state = .idle
+                        labelOverride = "—"
+                        tooltip = "Claude \(plan.displayName): No active session"
                     }
                 } else {
                     // Free plan
@@ -190,7 +197,7 @@ final class MenuBarController: NSObject {
             let controller = NSHostingController(rootView: view)
             hostingController = controller
             popover.contentViewController = controller
-            popover.contentSize = NSSize(width: 500, height: 600)
+            popover.contentSize = NSSize(width: 500, height: 900)
         }
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)

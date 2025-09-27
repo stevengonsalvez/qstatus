@@ -48,16 +48,11 @@ public struct PercentageCalculator {
                 useBlockBaseline: true
             )
             return max(tokenPct, costPct)
-        } else if let monthlyData = monthlyData, monthlyData.limit > 0 {
-            // No active session - use monthly data
-            return calculateCostPercentage(
-                cost: monthlyData.cost,
-                useBlockBaseline: false,
-                monthlyLimit: monthlyData.limit
-            )
+        } else {
+            // No active session - show idle state
+            // This prevents showing misleading 100% when there's no active block
+            return 0
         }
-
-        return 0
     }
 
     /// Calculate token usage percentage
