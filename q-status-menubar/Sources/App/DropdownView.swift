@@ -52,7 +52,7 @@ struct DropdownView: View {
             .padding(.top, 14)
             .padding(.bottom, 6)
 
-            // Scrollable Middle Content with visible scrollbar
+            // Scrollable Middle Content with always-visible bright scrollbar
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 12) {
                     // Active Claude Code Session and Plan Usage
@@ -102,18 +102,45 @@ struct DropdownView: View {
                 .padding(.vertical, 6)
             }
             .frame(maxHeight: 700) // Allow much more space but still scroll if needed
+            .scrollIndicators(.visible, axes: .vertical) // Always show scrollbar
             .background(
                 // Add a subtle background to highlight scrollable area
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color.gray.opacity(0.05))
             )
             .overlay(
-                // Add a colored border on the right where scrollbar appears
+                // Add a bright colored indicator on the right to show scrollability
                 HStack {
                     Spacer()
-                    Rectangle()
-                        .fill(Color.blue.opacity(0.3))
-                        .frame(width: 2)
+                    VStack {
+                        // Top scroll indicator
+                        Image(systemName: "chevron.compact.up")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.blue)
+                            .padding(.top, 4)
+
+                        Spacer()
+
+                        // Visual scrollbar track indicator
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(LinearGradient(
+                                colors: [Color.blue.opacity(0.6), Color.blue.opacity(0.3)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ))
+                            .frame(width: 4)
+                            .padding(.vertical, 20)
+
+                        Spacer()
+
+                        // Bottom scroll indicator
+                        Image(systemName: "chevron.compact.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.blue)
+                            .padding(.bottom, 4)
+                    }
+                    .frame(width: 12)
+                    .background(Color.blue.opacity(0.1))
                 }
             )
 
