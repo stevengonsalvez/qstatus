@@ -2,7 +2,7 @@
 // Sets up terminal, event loop, and coordinates all components
 
 use anyhow::Result;
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -14,18 +14,18 @@ use q_status::{
         config::AppConfig,
         state::{AppEvent, AppState},
     },
-    data::collector::spawn_collector,
     ui::dashboard::Dashboard,
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::task::JoinHandle;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse CLI arguments
-    let config = parse_args();
+    let mut config = parse_args();
 
     // Create app state
     let state = Arc::new(AppState::new(config.clone()));
@@ -49,12 +49,37 @@ async fn main() -> Result<()> {
     // Create event channels
     let (event_tx, event_rx) = bounded::<AppEvent>(100);
 
-    // Try to spawn data collector - if database not found, still run UI
-    let collector_handle = match spawn_collector(state.clone(), event_tx.clone()) {
-        Ok(handle) => Some(handle),
+    // Determine which data source to use
+    let source_type = q_status::data::DataSourceType::from_str(&config.data_source)
+        .unwrap_or(q_status::data::DataSourceType::AmazonQ);
+
+    // Update config with active data source
+    config.active_data_source = Some(source_type);
+    let state = Arc::new(AppState::new(config.clone()));
+
+    // Try to spawn data collector with appropriate data source
+    let collector_handle = match q_status::data::DataSourceFactory::create_with_fallback(
+        source_type,
+        config.cost_per_1k_tokens,
+    ) {
+        Ok((data_source, actual_type)) => {
+            // Update state with actual data source used
+            if actual_type != source_type {
+                state.set_active_data_source(actual_type);
+            }
+
+            match spawn_collector_with_source(state.clone(), event_tx.clone(), data_source) {
+                Ok(handle) => Some(handle),
+                Err(e) => {
+                    eprintln!("Warning: Could not start data collector: {}", e);
+                    eprintln!("Running in demo mode");
+                    None
+                }
+            }
+        }
         Err(e) => {
-            eprintln!("Warning: Could not start data collector: {}", e);
-            eprintln!("Running in demo mode - Q database not found");
+            eprintln!("Warning: Could not create data source: {}", e);
+            eprintln!("Running in demo mode - no data source available");
             None
         }
     };
@@ -65,14 +90,17 @@ async fn main() -> Result<()> {
     // Create dashboard
     let mut dashboard = Dashboard::new(state.clone());
 
+    // Wrap collector handle in Arc<Mutex> for sharing
+    let collector_handle = Arc::new(Mutex::new(collector_handle));
+
     // Run main event loop
-    let result = run_event_loop(&mut terminal, &mut dashboard, event_rx).await;
+    let result = run_event_loop(&mut terminal, &mut dashboard, event_rx, event_tx, state.clone(), collector_handle.clone()).await;
 
     // Cleanup
     restore_terminal(&mut terminal)?;
 
     // Abort background tasks if they exist
-    if let Some(handle) = collector_handle {
+    if let Some(handle) = collector_handle.lock().unwrap().take() {
         handle.abort();
     }
 
@@ -83,7 +111,7 @@ fn parse_args() -> AppConfig {
     let matches = Command::new("q-status")
         .version("0.1.0")
         .author("Q-Status Team")
-        .about("High-performance token usage monitor for Amazon Q CLI")
+        .about("High-performance token usage monitor for Amazon Q and Claude Code")
         .arg(
             Arg::new("refresh-rate")
                 .short('r')
@@ -100,15 +128,24 @@ fn parse_args() -> AppConfig {
                 .help("Path to configuration file"),
         )
         .arg(
+            Arg::new("data-source")
+                .short('s')
+                .long("data-source")
+                .value_name("SOURCE")
+                .help("Data source to use (amazon-q, claude-code)")
+                .value_parser(["amazon-q", "claude-code", "claude", "q"]),
+        )
+        .arg(
             Arg::new("debug")
                 .short('d')
                 .long("debug")
                 .help("Enable debug logging")
-                .action(clap::ArgAction::SetTrue),
+                .action(ArgAction::SetTrue),
         )
         .get_matches();
 
-    let mut config = AppConfig::default();
+    // Load config from file and environment variables first
+    let mut config = AppConfig::load();
 
     if let Some(rate) = matches.get_one::<String>("refresh-rate") {
         if let Ok(parsed) = rate.parse() {
@@ -121,6 +158,10 @@ fn parse_args() -> AppConfig {
     }
 
     config.debug = matches.get_flag("debug");
+
+    if let Some(source) = matches.get_one::<String>("data-source") {
+        config.data_source = source.clone();
+    }
 
     config
 }
@@ -158,6 +199,9 @@ async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     dashboard: &mut Dashboard,
     event_rx: Receiver<AppEvent>,
+    event_tx: Sender<AppEvent>,
+    state: Arc<AppState>,
+    collector_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 ) -> Result<()> {
     loop {
         // Render dashboard
@@ -169,6 +213,50 @@ async fn run_event_loop(
                 AppEvent::Input(key) => {
                     if !dashboard.handle_key(key.code) {
                         break; // Quit requested
+                    }
+
+                    // Check if provider switch was requested
+                    if dashboard.is_switching_provider() {
+                        // Handle provider switching
+                        let current_source = state.get_active_data_source();
+                        let new_source = match current_source {
+                            q_status::data::DataSourceType::AmazonQ => q_status::data::DataSourceType::ClaudeCode,
+                            q_status::data::DataSourceType::ClaudeCode => q_status::data::DataSourceType::AmazonQ,
+                        };
+
+                        // Abort the current collector
+                        if let Some(handle) = collector_handle.lock().unwrap().take() {
+                            handle.abort();
+                        }
+
+                        // Try to create new data source
+                        match q_status::data::DataSourceFactory::create(new_source, state.config.cost_per_1k_tokens) {
+                            Ok(data_source) => {
+                                // Spawn new collector with new data source
+                                match q_status::data::spawn_collector_with_datasource(
+                                    state.clone(),
+                                    event_tx.clone(),
+                                    data_source,
+                                ) {
+                                    Ok(new_handle) => {
+                                        // Update state with new data source
+                                        state.set_active_data_source(new_source);
+                                        // Store new collector handle
+                                        *collector_handle.lock().unwrap() = Some(new_handle);
+                                        eprintln!("Switched to {}", new_source.display_name());
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to start collector for {}: {}", new_source.display_name(), e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to create {}: {}", new_source.display_name(), e);
+                            }
+                        }
+
+                        // Reset the switching flag
+                        dashboard.reset_switching_flag();
                     }
                 }
                 AppEvent::DatabaseUpdate(_) => {
@@ -189,20 +277,44 @@ async fn run_event_loop(
     Ok(())
 }
 
+// Helper function to spawn collector with a specific data source
+fn spawn_collector_with_source(
+    state: Arc<AppState>,
+    event_tx: Sender<AppEvent>,
+    data_source: Box<dyn q_status::data::DataSource>,
+) -> Result<tokio::task::JoinHandle<()>> {
+    use q_status::data::DataCollector;
+
+    let collector = DataCollector::new(state, data_source, event_tx)?;
+    let handle = tokio::spawn(async move {
+        collector.run().await;
+    });
+    Ok(handle)
+}
+
 async fn run_status_check(state: Arc<AppState>) -> Result<()> {
-    use q_status::data::database::QDatabase;
-    
-    println!("Q-Status Monitor - Global System Overview");
+    use q_status::data::{DataSourceFactory, DataSourceType};
+
+    let source_type = DataSourceType::from_str(&state.config.data_source)
+        .unwrap_or(DataSourceType::AmazonQ);
+
+    println!("Q-Status Monitor - {} System Overview", source_type.display_name());
     println!("==========================================");
-    
-    // Try to connect to database
-    match QDatabase::new() {
-        Ok(mut db) => {
-            println!("✓ Q database found at: {:?}", db.db_path);
+
+    // Try to connect to appropriate data source
+    match DataSourceFactory::create_with_fallback(source_type, state.config.cost_per_1k_tokens) {
+        Ok((mut data_source, actual_type)) => {
+            if actual_type != source_type {
+                println!("Note: Using {} (requested {} not available)", actual_type, source_type);
+            } else {
+                println!("✓ Connected to {} data source", actual_type);
+            }
             println!();
             
             // Get global statistics
-            let global_stats = db.get_global_stats(state.config.cost_per_1k_tokens)?;
+            let global_stats = futures::executor::block_on(
+                data_source.get_global_stats(state.config.cost_per_1k_tokens)
+            )?;
             println!("📊 System-Wide Statistics:");
             println!("  - Total Conversations: {}", global_stats.total_conversations);
             println!("  - Total Tokens Used: {}", global_stats.total_tokens);
@@ -213,7 +325,9 @@ async fn run_status_check(state: Arc<AppState>) -> Result<()> {
             println!();
             
             // Get all conversation summaries
-            let summaries = db.get_all_conversation_summaries()?;
+            let summaries = futures::executor::block_on(
+                data_source.get_all_conversation_summaries()
+            )?;
             println!("🔝 Top Conversations by Token Usage:");
             for (idx, conv) in summaries.iter().take(5).enumerate() {
                 let status_emoji = match conv.token_usage.compaction_status {
@@ -239,9 +353,13 @@ async fn run_status_check(state: Arc<AppState>) -> Result<()> {
             
             // Get latest conversation (most recently modified)
             println!("📍 Latest Conversation:");
-            match db.get_current_conversation(None) {
+            match futures::executor::block_on(
+                data_source.get_current_conversation(None)
+            ) {
                 Ok(Some(conv)) => {
-                    let usage_details = db.get_token_usage(&conv);
+                    let usage_details = futures::executor::block_on(
+                        data_source.get_token_usage(&conv)
+                    )?;
                     println!("✓ Active conversation found");
                     println!("  - Conversation ID: {}", conv.conversation_id);
                     println!("  - Message count: {} exchanges", usage_details.message_count);
@@ -276,29 +394,37 @@ async fn run_status_check(state: Arc<AppState>) -> Result<()> {
                 }
             }
             
-            // Check if database has recent changes
-            match db.has_changed() {
+            // Check if data source has recent changes
+            match futures::executor::block_on(
+                data_source.has_changed()
+            ) {
                 Ok(changed) => {
                     if changed {
-                        println!("✓ Database has recent activity");
+                        println!("✓ Data source has recent activity");
                     } else {
-                        println!("  Database is idle");
+                        println!("  Data source is idle");
                     }
                 }
                 Err(e) => {
-                    println!("✗ Error checking database status: {}", e);
+                    println!("✗ Error checking data source status: {}", e);
                 }
             }
         }
         Err(e) => {
-            println!("✗ Q database not found: {}", e);
+            println!("✗ Data source not available: {}", e);
             println!();
             println!("Expected locations:");
-            println!("  - ~/Library/Application Support/amazon-q/data.sqlite3 (macOS)");
-            println!("  - ~/.local/share/amazon-q/data.sqlite3 (Linux)");
-            println!("  - ~/.aws/q/db/q.db (Legacy)");
+            if source_type == DataSourceType::AmazonQ {
+                println!("  Amazon Q:");
+                println!("    - ~/Library/Application Support/amazon-q/data.sqlite3 (macOS)");
+                println!("    - ~/.local/share/amazon-q/data.sqlite3 (Linux)");
+                println!("    - ~/.aws/q/db/q.db (Legacy)");
+            } else {
+                println!("  Claude Code:");
+                println!("    - ~/.claude/usage/*.json (usage files)");
+            }
             println!();
-            println!("Make sure Amazon Q CLI is installed and has been used at least once.");
+            println!("Make sure {} is installed and has been used at least once.", source_type);
         }
     }
     

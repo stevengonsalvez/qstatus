@@ -19,7 +19,7 @@ public struct QDBConfig: Sendable {
     }
 }
 
-public actor QDBReader {
+public actor QDBReader: DataSource {
     private let config: QDBConfig
     private var dbPool: DatabasePool?
     private let defaultContextWindow: Int
@@ -211,6 +211,9 @@ public actor QDBReader {
                                                              fallbackChars: fallbackChars)
                     let tokens = TokenEstimator.estimateTokens(breakdown: breakdown)
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
+                    // Creating a dependency from QDBReader to PercentageCalculator would create a circular reference.
                     let rawUsage = ctxTokens > 0 ? (Double(tokens)/Double(ctxTokens))*100.0 : 0
                     let usage = tokens >= ctxTokens ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -227,6 +230,8 @@ public actor QDBReader {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
                         let ctx = self.defaultContextWindow
                         // Cap at 99.9% unless truly at or above limit
+                        // Note: This percentage calculation remains here (not in PercentageCalculator)
+                        // because QDBReader is a foundation layer that PercentageCalculator depends on.
                         let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
@@ -252,6 +257,8 @@ public actor QDBReader {
                     let est = TokenEstimator.estimate(from: value)
                     let ctx = est.contextWindow ?? self.defaultContextWindow
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(est.tokens)/Double(ctx))*100.0 : 0
                     let usage = est.tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -266,6 +273,8 @@ public actor QDBReader {
                         let tokens = arr.reduce(0) { $0 + $1.tokensUsed }
                         let ctx = self.defaultContextWindow
                         // Cap at 99.9% unless truly at or above limit
+                        // Note: This percentage calculation remains here (not in PercentageCalculator)
+                        // because QDBReader is a foundation layer that PercentageCalculator depends on.
                         let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0
                         let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                         agg.append(SessionSummary(id: cwd.isEmpty ? "(no-path)" : cwd, cwd: cwd, tokensUsed: tokens, contextWindow: ctx, usagePercent: usage, messageCount: arr.reduce(0){$0+$1.messageCount}, lastActivity: arr.compactMap{$0.lastActivity}.max(), state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: nil, hasCompactionIndicators: arr.contains{ $0.hasCompactionIndicators }, modelId: nil, costUSD: 0.0))
@@ -294,6 +303,8 @@ public actor QDBReader {
                     let breakdown = TokenEstimator.estimateBreakdown(from: json)
                     let ctx = breakdown.contextWindow ?? self.defaultContextWindow
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(breakdown.totalTokens)/Double(ctx))*100.0 : 0
                     let usage = breakdown.totalTokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -388,6 +399,8 @@ public actor QDBReader {
                     let ctx: Int = r["ctx"] ?? self.defaultContextWindow
                     let tokens = Int((((Double(chars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
                     // Cap at 99.9% unless truly at or above limit
+                    // Note: This percentage calculation remains here (not in PercentageCalculator)
+                    // because QDBReader is a foundation layer that PercentageCalculator depends on.
                     let rawUsage = ctx > 0 ? (Double(tokens)/Double(ctx))*100.0 : 0.0
                     let usage = tokens >= ctx ? 100.0 : min(99.9, max(0.0, rawUsage))
                     let state: SessionState = usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal)
@@ -497,6 +510,64 @@ public actor QDBReader {
         public let dayMessages: Int
         public let weekMessages: Int
         public let monthMessages: Int
+        public let dayCost: Double
+        public let weekCost: Double
+        public let monthCost: Double
+        public let yearCost: Double
+
+        // Backward compatibility initializer without cost fields
+        public init(
+            modelId: String?,
+            dayTokens: Int,
+            weekTokens: Int,
+            monthTokens: Int,
+            yearTokens: Int,
+            dayMessages: Int,
+            weekMessages: Int,
+            monthMessages: Int
+        ) {
+            self.modelId = modelId
+            self.dayTokens = dayTokens
+            self.weekTokens = weekTokens
+            self.monthTokens = monthTokens
+            self.yearTokens = yearTokens
+            self.dayMessages = dayMessages
+            self.weekMessages = weekMessages
+            self.monthMessages = monthMessages
+            self.dayCost = 0.0
+            self.weekCost = 0.0
+            self.monthCost = 0.0
+            self.yearCost = 0.0
+        }
+
+        // Full initializer with cost fields
+        public init(
+            modelId: String?,
+            dayTokens: Int,
+            weekTokens: Int,
+            monthTokens: Int,
+            yearTokens: Int,
+            dayMessages: Int,
+            weekMessages: Int,
+            monthMessages: Int,
+            dayCost: Double,
+            weekCost: Double,
+            monthCost: Double,
+            yearCost: Double
+        ) {
+            self.modelId = modelId
+            self.dayTokens = dayTokens
+            self.weekTokens = weekTokens
+            self.monthTokens = monthTokens
+            self.yearTokens = yearTokens
+            self.dayMessages = dayMessages
+            self.weekMessages = weekMessages
+            self.monthMessages = monthMessages
+            self.dayCost = dayCost
+            self.weekCost = weekCost
+            self.monthCost = monthCost
+            self.yearCost = yearCost
+        }
     }
 
     public func fetchPeriodTokensByModel(now: Date = Date()) async throws -> [PeriodByModel] {
@@ -567,7 +638,20 @@ public actor QDBReader {
                 if mDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "m") }
                 if yDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "y") }
             }
-            return byModel.map { (k,v) in PeriodByModel(modelId: k, dayTokens: v.0, weekTokens: v.1, monthTokens: v.2, yearTokens: v.3, dayMessages: v.4, weekMessages: v.5, monthMessages: v.6) }
+            // Calculate costs using default rate (this will be overridden by settings in UpdateCoordinator)
+            let defaultRate = 0.0025 // Default rate per 1k tokens
+            return byModel.map { (k,v) in
+                let dayCost = CostEstimator.estimateUSD(tokens: v.0, ratePer1k: defaultRate)
+                let weekCost = CostEstimator.estimateUSD(tokens: v.1, ratePer1k: defaultRate)
+                let monthCost = CostEstimator.estimateUSD(tokens: v.2, ratePer1k: defaultRate)
+                let yearCost = CostEstimator.estimateUSD(tokens: v.3, ratePer1k: defaultRate)
+                return PeriodByModel(
+                    modelId: k,
+                    dayTokens: v.0, weekTokens: v.1, monthTokens: v.2, yearTokens: v.3,
+                    dayMessages: v.4, weekMessages: v.5, monthMessages: v.6,
+                    dayCost: dayCost, weekCost: weekCost, monthCost: monthCost, yearCost: yearCost
+                )
+            }
         }
     }
 
@@ -632,7 +716,18 @@ public actor QDBReader {
                 let dMsg: Int = r["day_msgs"] ?? 0
                 let wMsg: Int = r["week_msgs"] ?? 0
                 let mMsg: Int = r["month_msgs"] ?? 0
-                out.append(PeriodByModel(modelId: mid, dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, yearTokens: 0, dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg))
+                // Calculate costs using default rate (this will be overridden by settings in UpdateCoordinator)
+                let defaultRate = 0.0025 // Default rate per 1k tokens
+                let dayCost = CostEstimator.estimateUSD(tokens: dTok, ratePer1k: defaultRate)
+                let weekCost = CostEstimator.estimateUSD(tokens: wTok, ratePer1k: defaultRate)
+                let monthCost = CostEstimator.estimateUSD(tokens: mTok, ratePer1k: defaultRate)
+                let yearCost = 0.0 // Year tokens not calculated in this method
+                out.append(PeriodByModel(
+                    modelId: mid,
+                    dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, yearTokens: 0,
+                    dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg,
+                    dayCost: dayCost, weekCost: weekCost, monthCost: monthCost, yearCost: yearCost
+                ))
             }
             return out
         }

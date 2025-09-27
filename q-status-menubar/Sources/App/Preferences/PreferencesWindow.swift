@@ -18,7 +18,7 @@ struct PreferencesWindow: View {
                 .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
         }
         .padding()
-        .frame(width: 520, height: 380)
+        .frame(width: 550, height: 480)
         .onChange(of: settings.updateInterval) { _ in settings.saveToDisk() }
         .onChange(of: settings.showPercentBadge) { _ in settings.saveToDisk() }
         .onChange(of: settings.launchAtLogin) { newValue in
@@ -37,18 +37,237 @@ struct PreferencesWindow: View {
         .onChange(of: settings.compactMode) { _ in settings.saveToDisk() }
         .onChange(of: settings.defaultContextWindowTokens) { _ in settings.saveToDisk() }
         .onChange(of: settings.costRatePer1kTokensUSD) { _ in settings.saveToDisk() }
+        .onChange(of: settings.dataSourceType) { _ in settings.saveToDisk() }
+        .onChange(of: settings.claudeConfigPaths) { _ in settings.saveToDisk() }
+        .onChange(of: settings.costMode) { _ in settings.saveToDisk() }
+        .onChange(of: settings.claudePlan) { _ in settings.saveToDisk() }
+        .onChange(of: settings.customPlanP90Percentile) { _ in settings.saveToDisk() }
+        .onChange(of: settings.customPlanUseP90) { _ in settings.saveToDisk() }
+        .onChange(of: settings.customPlanTokenLimit) { _ in settings.saveToDisk() }
+        .onChange(of: settings.customPlanCostLimit) { _ in settings.saveToDisk() }
+        .onChange(of: settings.customPlanMessageLimit) { _ in settings.saveToDisk() }
     }
 }
 
 private struct GeneralTab: View {
     @ObservedObject var settings: SettingsStore
+    @State private var showRestartAlert = false
+
+    // Helper functions for plan limits
+    private func getCurrentTokenLimit() -> Int {
+        if settings.claudePlan == .custom {
+            return settings.customPlanUseP90 ? settings.customPlanTokenLimit : settings.customPlanTokenLimit
+        }
+        return settings.claudePlan.tokenLimit
+    }
+
+    private func getCurrentCostLimit() -> Double {
+        if settings.claudePlan == .custom {
+            return settings.customPlanUseP90 ? settings.customPlanCostLimit : settings.customPlanCostLimit
+        }
+        return settings.claudePlan.costLimit
+    }
+
+    private func getCurrentMessageLimit() -> Int {
+        if settings.claudePlan == .custom {
+            return settings.customPlanUseP90 ? settings.customPlanMessageLimit : settings.customPlanMessageLimit
+        }
+        return settings.claudePlan.messageLimit
+    }
+
+    private func formatNumber(_ number: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        formatter.usesGroupingSeparator = true
+        return formatter.string(from: NSNumber(value: number)) ?? "\(number)"
+    }
+
+    private func currencyFormatter() -> NumberFormatter {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }
+
     var body: some View {
         Form {
-            Stepper(value: $settings.updateInterval, in: 1...30) {
-                HStack { Text("Polling Interval"); Spacer(); Text("\(settings.updateInterval)s") }
+            Section(header: Text("Data Source")) {
+                Picker("Provider", selection: $settings.dataSourceType) {
+                    ForEach(DataSourceType.allCases, id: \.self) { type in
+                        Text(type.displayName).tag(type)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: settings.dataSourceType) { _ in
+                    showRestartAlert = true
+                }
+
+                if settings.dataSourceType == .claudeCode {
+                    // Claude Plan Selection
+                    Picker("Plan", selection: $settings.claudePlan) {
+                        ForEach(ClaudePlan.allCases, id: \.self) { plan in
+                            Text(plan.displayName).tag(plan)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    // Display plan details
+                    GroupBox(label: Text("Plan Limits").font(.caption).foregroundStyle(.secondary)) {
+                        HStack(spacing: 16) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Tokens:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if settings.claudePlan == .custom && !settings.customPlanUseP90 {
+                                    Text(formatNumber(settings.customPlanTokenLimit))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                } else {
+                                    Text(formatNumber(getCurrentTokenLimit()))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                            }
+
+                            Divider()
+                                .frame(height: 30)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Cost:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if settings.claudePlan == .custom && !settings.customPlanUseP90 {
+                                    Text("$\(String(format: "%.0f", settings.customPlanCostLimit))/mo")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                } else {
+                                    Text("$\(String(format: "%.0f", getCurrentCostLimit()))/mo")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                            }
+
+                            Divider()
+                                .frame(height: 30)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Messages:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if settings.claudePlan == .custom && !settings.customPlanUseP90 {
+                                    Text(formatNumber(settings.customPlanMessageLimit))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                } else {
+                                    Text(formatNumber(getCurrentMessageLimit()))
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                }
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                    }
+
+                    // Custom Plan Configuration (only show when Custom is selected)
+                    if settings.claudePlan == .custom {
+                        GroupBox(label: Text("Custom Plan Configuration").font(.caption)) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Toggle("Use P90 calculation", isOn: $settings.customPlanUseP90)
+                                    .font(.caption)
+
+                                if settings.customPlanUseP90 {
+                                    // P90 Percentile Slider
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text("P90 Percentile:")
+                                                .font(.caption)
+                                            Spacer()
+                                            Text("\(Int(settings.customPlanP90Percentile))%")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Slider(value: $settings.customPlanP90Percentile, in: 50...99, step: 1)
+                                    }
+                                } else {
+                                    // Manual limit inputs
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text("Token Limit:")
+                                                .font(.caption)
+                                                .frame(width: 90, alignment: .leading)
+                                            TextField("200000", value: $settings.customPlanTokenLimit, formatter: NumberFormatter())
+                                                .textFieldStyle(.roundedBorder)
+                                                .font(.caption)
+                                        }
+
+                                        HStack {
+                                            Text("Cost Limit:")
+                                                .font(.caption)
+                                                .frame(width: 90, alignment: .leading)
+                                            HStack(spacing: 2) {
+                                                Text("$").font(.caption).foregroundStyle(.secondary)
+                                                TextField("100.00", value: $settings.customPlanCostLimit, formatter: currencyFormatter())
+                                                    .textFieldStyle(.roundedBorder)
+                                                    .font(.caption)
+                                            }
+                                        }
+
+                                        HStack {
+                                            Text("Message Limit:")
+                                                .font(.caption)
+                                                .frame(width: 90, alignment: .leading)
+                                            TextField("10000", value: $settings.customPlanMessageLimit, formatter: NumberFormatter())
+                                                .textFieldStyle(.roundedBorder)
+                                                .font(.caption)
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                        }
+                    }
+
+                    // Configuration paths
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Claude configuration paths (one per line):")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: Binding(
+                            get: { settings.claudeConfigPaths.joined(separator: "\n") },
+                            set: { settings.claudeConfigPaths = $0.split(separator: "\n").map(String.init) }
+                        ))
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(height: 60)
+                    }
+
+                    Picker("Cost Mode", selection: $settings.costMode) {
+                        Text("Auto").tag("auto")
+                        Text("Input").tag("input")
+                        Text("Output").tag("output")
+                        Text("Cache Read").tag("cache_read")
+                        Text("Cache Write").tag("cache_write")
+                    }
+                }
             }
-            Toggle("Show Percentage Badge", isOn: $settings.showPercentBadge)
-            Toggle("Launch at Login", isOn: $settings.launchAtLogin)
+
+            Section(header: Text("General")) {
+                Stepper(value: $settings.updateInterval, in: 1...30) {
+                    HStack { Text("Polling Interval"); Spacer(); Text("\(settings.updateInterval)s") }
+                }
+                Toggle("Show Percentage Badge", isOn: $settings.showPercentBadge)
+                Toggle("Launch at Login", isOn: $settings.launchAtLogin)
+            }
+        }
+        .alert("Restart Required", isPresented: $showRestartAlert) {
+            Button("OK") { }
+        } message: {
+            Text("Please restart the app for the data source change to take effect.")
         }
     }
 }

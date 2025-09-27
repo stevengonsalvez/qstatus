@@ -2,7 +2,8 @@ import AppKit
 
 public enum IconBadgeRenderer {
     public static func render(percentage: Int, state: HealthState, badge: Int? = nil, labelOverride: String? = nil) -> NSImage {
-        let size = NSSize(width: 22, height: 22)
+        // Increased width from 22 to 36 to accommodate "100%" without cutoff
+        let size = NSSize(width: 36, height: 22)
         let image = NSImage(size: size)
         image.lockFocus()
 
