@@ -62,7 +62,7 @@ final class CodexDataSourceTests: XCTestCase {
         XCTAssertEqual(rl.primaryWindowMinutes, 300)
         XCTAssertEqual(rl.secondaryUsedPercent, 12.1, accuracy: 0.01)
         XCTAssertEqual(rl.secondaryWindowMinutes, 10080)
-        XCTAssertEqual(rl.creditsBalance, 4.20, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(rl.creditsBalance), 4.20, accuracy: 0.01)
         XCTAssertFalse(rl.creditsUnlimited)
         XCTAssertEqual(rl.planType, "pro")
         XCTAssertEqual(session.sessionId, "sess-123")
@@ -151,7 +151,7 @@ final class CodexDataSourceTests: XCTestCase {
         // Last event_msg has 55.5% primary
         XCTAssertEqual(rl.primaryUsedPercent, 55.5, accuracy: 0.01)
         XCTAssertEqual(rl.secondaryUsedPercent, 15.3, accuracy: 0.01)
-        XCTAssertEqual(rl.creditsBalance, 3.80, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(rl.creditsBalance), 3.80, accuracy: 0.01)
     }
 
     // MARK: - Unlimited Credits

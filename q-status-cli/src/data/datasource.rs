@@ -156,4 +156,8 @@ impl DataSource for MockDataSource {
             message_count: conversation.history.len(),
         })
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
