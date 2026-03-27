@@ -65,14 +65,19 @@ struct DropdownView: View {
                         copilotQuotaSection
                     }
 
+                    // Codex CLI rate limits section
+                    if viewModel.settings?.dataSourceType == .codex {
+                        codexRateLimitsSection
+                    }
+
                     Divider()
 
-                    // Recent Sessions header block (hidden for Copilot — no session concept)
-                    if viewModel.settings?.dataSourceType != .copilot {
+                    // Recent Sessions header block (hidden for Copilot/Codex — no session concept)
+                    if viewModel.settings?.dataSourceType != .copilot && viewModel.settings?.dataSourceType != .codex {
                         recentSessionsSection
                     }
 
-                    if viewModel.settings?.dataSourceType != .copilot {
+                    if viewModel.settings?.dataSourceType != .copilot && viewModel.settings?.dataSourceType != .codex {
                         Divider()
 
                         // Compact view - show only 3 recent sessions
@@ -192,6 +197,8 @@ struct DropdownView: View {
                 claudeCodeHeader
             } else if viewModel.settings?.dataSourceType == .copilot {
                 copilotHeader
+            } else if viewModel.settings?.dataSourceType == .codex {
+                codexHeader
             } else {
                 amazonQHeader
             }
@@ -406,6 +413,202 @@ struct DropdownView: View {
             return display.string(from: date)
         }
         return dateStr
+    }
+
+    // MARK: - Codex CLI Views
+
+    @ViewBuilder
+    private var codexHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            HStack(spacing: 4) {
+                Text("Codex CLI").font(.headline)
+                Text("•")
+                    .foregroundStyle(.secondary)
+                Image(systemName: "terminal.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("Data source: Codex CLI")
+            }
+            Spacer()
+            if let codex = viewModel.codexSession {
+                let primaryPercent = codex.primary?.usedPercent ?? 0
+                Text("\(Int(primaryPercent.rounded()))%")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(codexPercentColor(primaryPercent))
+                    .help("Primary rate limit usage")
+            }
+        }
+        .font(.caption)
+
+        if let codex = viewModel.codexSession {
+            HStack {
+                Text("Plan: \(codex.planType)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !codex.isActive {
+                    Text("• Inactive")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let cwd = codex.cwd {
+                    Text("• \(cwd)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexRateLimitsSection: some View {
+        if let codex = viewModel.codexSession {
+            if !codex.isActive {
+                VStack(spacing: 6) {
+                    Image(systemName: "moon.zzz")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                    Text("No active session")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Last activity: \(codexFormatRelativeTime(codex.lastActivity))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let primary = codex.primary {
+                        codexRateRow(item: primary)
+                    }
+                    if let secondary = codex.secondary {
+                        codexRateRow(item: secondary)
+                    }
+                    // Credits row
+                    if !codex.creditsUnlimited, let balance = codex.creditsBalance {
+                        HStack {
+                            Text("Credits:")
+                                .font(.system(size: 11, weight: .medium))
+                            Text(String(format: "$%.2f remaining", balance))
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(balance < 1.0 ? .red : .primary)
+                            Spacer()
+                            Text("plan: \(codex.planType)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    // cwd row
+                    if let cwd = codex.cwd {
+                        HStack(spacing: 4) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text(cwd)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.orange.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.15), lineWidth: 1)
+                )
+            }
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text("Loading Codex session...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder
+    private func codexRateRow(item: CodexDisplayData.RateItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(item.label)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                Text("\(Int(item.usedPercent.rounded()))% used")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(codexPercentColor(item.usedPercent))
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 8)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(codexBarGradient(item.usedPercent))
+                        .frame(width: max(0, geo.size.width * min(1, item.usedPercent / 100)), height: 8)
+                }
+            }
+            .frame(height: 8)
+
+            HStack {
+                Text("Resets \(codexFormatRelativeTime(item.resetsAt))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+    }
+
+    private func codexPercentColor(_ percent: Double) -> Color {
+        if percent >= 90 { return .red }
+        if percent >= 70 { return .orange }
+        return .green
+    }
+
+    private func codexBarGradient(_ percent: Double) -> LinearGradient {
+        let color: Color = codexPercentColor(percent)
+        return LinearGradient(
+            colors: [color.opacity(0.7), color],
+            startPoint: .leading,
+            endPoint: .trailing)
+    }
+
+    private func codexFormatRelativeTime(_ date: Date) -> String {
+        let now = Date()
+        let interval = date.timeIntervalSince(now)
+        if interval > 0 {
+            // Future date (resets_at)
+            let minutes = Int(interval / 60)
+            let hours = minutes / 60
+            let days = hours / 24
+            if days > 0 {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "EEE HH:mm"
+                return formatter.string(from: date)
+            }
+            if hours > 0 { return "\(hours)h \(minutes % 60)m" }
+            return "\(minutes)m"
+        } else {
+            // Past date (last activity)
+            let seconds = Int(-interval)
+            let minutes = seconds / 60
+            let hours = minutes / 60
+            if hours > 0 { return "\(hours)h ago" }
+            if minutes > 0 { return "\(minutes)m ago" }
+            return "just now"
+        }
     }
 
     @ViewBuilder
@@ -958,7 +1161,7 @@ struct DropdownView: View {
             HStack(spacing: 4) {
                 Image(systemName: provider.iconName)
                     .font(.caption)
-                    .foregroundStyle(provider == .amazonQ ? .blue : provider == .copilot ? .green : .purple)
+                    .foregroundStyle(provider == .amazonQ ? .blue : provider == .copilot ? .green : provider == .codex ? .orange : .purple)
                 Text(provider.displayName)
                     .font(.caption)
             }
