@@ -80,6 +80,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         await self.refreshActiveClaudeSession()
                         // Refresh Copilot quota if applicable
                         await self.refreshCopilotQuota()
+                        // Refresh Codex session if applicable
+                        await self.refreshCodexSession()
                         // Batch UI update - notify once after all refreshes
                         await MainActor.run { self.onUIUpdate?(self.viewModel) }
                     } else {
@@ -125,6 +127,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 await self.refreshGlobalTotals()
                 await self.refreshActiveClaudeSession()
                 await self.refreshCopilotQuota()
+                await self.refreshCodexSession()
                 // Batch UI update - notify once after all refreshes
                 await MainActor.run { self.onUIUpdate?(self.viewModel) }
             } catch { /* ignore */ }
@@ -488,6 +491,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
             await MainActor.run { viewModel.copilotQuota = quota }
         }
     }
+
+    private func refreshCodexSession() async {
+        guard settings.dataSourceType == .codex else {
+            await MainActor.run { viewModel.codexSession = nil }
+            return
+        }
+        if let codexReader = reader as? CodexDataSource {
+            let display = await codexReader.latestDisplayData
+            await MainActor.run { viewModel.codexSession = display }
+        }
+    }
 }
 
 public final class UsageViewModel: ObservableObject {
@@ -561,6 +575,8 @@ public final class UsageViewModel: ObservableObject {
     @Published public var maxTokensFromPreviousBlocks: Int? = nil
     // Copilot quota data
     @Published public var copilotQuota: CopilotQuotaDisplayData? = nil
+    // Codex CLI session data
+    @Published public var codexSession: CodexDisplayData? = nil
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {

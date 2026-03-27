@@ -7,12 +7,14 @@ public enum DataSourceType: String, CaseIterable, Codable {
     case amazonQ = "amazon-q"
     case claudeCode = "claude-code"
     case copilot = "copilot"
+    case codex = "codex"
 
     public var displayName: String {
         switch self {
         case .amazonQ: return "Amazon Q"
         case .claudeCode: return "Claude Code"
         case .copilot: return "GitHub Copilot"
+        case .codex: return "Codex CLI"
         }
     }
 
@@ -21,6 +23,7 @@ public enum DataSourceType: String, CaseIterable, Codable {
         case .amazonQ: return "q.circle"
         case .claudeCode: return "c.circle"
         case .copilot: return "g.circle"
+        case .codex: return "terminal.fill"
         }
     }
 }
@@ -40,6 +43,8 @@ public struct DataSourceFactory {
                 return CopilotDataSource(token: token)
             }
             return CopilotDataSource()
+        case .codex:
+            return CodexDataSource()
         }
     }
 }

@@ -266,6 +266,7 @@ public final class SettingsStore: ObservableObject {
             if s == "amazon-q" { dataSourceType = .amazonQ }
             else if s == "claude-code" { dataSourceType = .claudeCode }
             else if s == "copilot" { dataSourceType = .copilot }
+            else if s == "codex" { dataSourceType = .codex }
         }
         if let s = env["QSTATUS_COPILOT_TOKEN"], !s.isEmpty { copilotToken = s }
         if let s = env["QSTATUS_CLAUDE_CONFIG_PATHS"] {
