@@ -6,11 +6,13 @@ import Foundation
 public enum DataSourceType: String, CaseIterable, Codable {
     case amazonQ = "amazon-q"
     case claudeCode = "claude-code"
+    case copilot = "copilot"
 
     public var displayName: String {
         switch self {
         case .amazonQ: return "Amazon Q"
         case .claudeCode: return "Claude Code"
+        case .copilot: return "GitHub Copilot"
         }
     }
 
@@ -18,6 +20,7 @@ public enum DataSourceType: String, CaseIterable, Codable {
         switch self {
         case .amazonQ: return "q.circle"
         case .claudeCode: return "c.circle"
+        case .copilot: return "g.circle"
         }
     }
 }
@@ -32,6 +35,11 @@ public struct DataSourceFactory {
                 configPaths: settings.claudeConfigPaths,
                 costMode: CostMode(rawValue: settings.costMode) ?? .auto
             )
+        case .copilot:
+            if let token = settings.copilotToken, !token.isEmpty {
+                return CopilotDataSource(token: token)
+            }
+            return CopilotDataSource()
         }
     }
 }

@@ -46,6 +46,7 @@ struct PreferencesWindow: View {
         .onChange(of: settings.customPlanTokenLimit) { _ in settings.saveToDisk() }
         .onChange(of: settings.customPlanCostLimit) { _ in settings.saveToDisk() }
         .onChange(of: settings.customPlanMessageLimit) { _ in settings.saveToDisk() }
+        .onChange(of: settings.copilotToken) { _ in settings.saveToDisk() }
     }
 }
 
@@ -254,6 +255,32 @@ private struct GeneralTab: View {
                         Text("Cache Write").tag("cache_write")
                     }
                 }
+
+                if settings.dataSourceType == .copilot {
+                    copilotSettingsSection
+                }
+            }
+
+            // Providers overview
+            Section(header: Text("Providers")) {
+                providerStatusRow(
+                    name: "Claude Code",
+                    icon: "c.circle",
+                    color: .purple,
+                    status: claudeCodeDetected ? "auto-detected" : "not found",
+                    connected: claudeCodeDetected)
+                providerStatusRow(
+                    name: "Amazon Q",
+                    icon: "q.circle",
+                    color: .blue,
+                    status: amazonQDetected ? "auto-detected" : "not found",
+                    connected: amazonQDetected)
+                providerStatusRow(
+                    name: "GitHub Copilot",
+                    icon: "g.circle",
+                    color: .green,
+                    status: copilotDetected ? "Connected" : "Not configured",
+                    connected: copilotDetected)
             }
 
             Section(header: Text("General")) {
@@ -268,6 +295,73 @@ private struct GeneralTab: View {
             Button("OK") { }
         } message: {
             Text("Please restart the app for the data source change to take effect.")
+        }
+    }
+
+    // MARK: - Copilot Settings
+
+    @ViewBuilder
+    private var copilotSettingsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Authentication is auto-detected from gh CLI (~/.config/gh/hosts.yml).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if CopilotDataSource.isTokenAvailable() {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                    Text("Token found — connected")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            } else {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                    Text("No token found. Run `gh auth login` or add token to Keychain.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    // MARK: - Provider Status
+
+    private var claudeCodeDetected: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude").path) ||
+               FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/claude").path)
+    }
+
+    private var amazonQDetected: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return FileManager.default.fileExists(
+            atPath: home.appendingPathComponent("Library/Application Support/amazon-q/data.sqlite3").path)
+    }
+
+    private var copilotDetected: Bool {
+        CopilotDataSource.isTokenAvailable()
+    }
+
+    @ViewBuilder
+    private func providerStatusRow(name: String, icon: String, color: Color, status: String, connected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: connected ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(connected ? .green : .gray)
+                .font(.caption)
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .font(.caption)
+            Text(name)
+                .font(.caption)
+            Spacer()
+            Text(status)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 }

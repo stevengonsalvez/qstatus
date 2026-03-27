@@ -78,6 +78,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
                         await self.refreshGlobalTotals()
                         // Refresh active Claude Code session if applicable
                         await self.refreshActiveClaudeSession()
+                        // Refresh Copilot quota if applicable
+                        await self.refreshCopilotQuota()
                         // Batch UI update - notify once after all refreshes
                         await MainActor.run { self.onUIUpdate?(self.viewModel) }
                     } else {
@@ -122,6 +124,7 @@ public final class UpdateCoordinator: @unchecked Sendable {
                 }
                 await self.refreshGlobalTotals()
                 await self.refreshActiveClaudeSession()
+                await self.refreshCopilotQuota()
                 // Batch UI update - notify once after all refreshes
                 await MainActor.run { self.onUIUpdate?(self.viewModel) }
             } catch { /* ignore */ }
@@ -474,6 +477,17 @@ public final class UpdateCoordinator: @unchecked Sendable {
             }
         }
     }
+
+    private func refreshCopilotQuota() async {
+        guard settings.dataSourceType == .copilot else {
+            await MainActor.run { viewModel.copilotQuota = nil }
+            return
+        }
+        if let copilotReader = reader as? CopilotDataSource {
+            let quota = await copilotReader.latestQuotaDisplay
+            await MainActor.run { viewModel.copilotQuota = quota }
+        }
+    }
 }
 
 public final class UsageViewModel: ObservableObject {
@@ -545,6 +559,8 @@ public final class UsageViewModel: ObservableObject {
     // Active Claude Code session
     @Published public var activeClaudeSession: ActiveSessionData? = nil
     @Published public var maxTokensFromPreviousBlocks: Int? = nil
+    // Copilot quota data
+    @Published public var copilotQuota: CopilotQuotaDisplayData? = nil
 
     public var subtitle: String { "Live from Amazon Q" }
     public var tintColor: Color {
