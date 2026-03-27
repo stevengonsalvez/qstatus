@@ -27,6 +27,12 @@ public enum TokenEstimator {
         }
     }
 
+    /// Canonical single-contract estimator: chars → tokens.
+    /// All code paths must funnel through this for consistency.
+    public static func estimate(charCount: Int) -> Int {
+        return roundUpToNearest10(tokens: Double(charCount) / charsPerToken)
+    }
+
     private static func roundUpToNearest10(tokens: Double) -> Int {
         // Implements: (char/4 + 5) / 10 * 10 → round to nearest 10 (0.5 up)
         return Int(((tokens + 5.0) / 10.0).rounded(.down) * 10.0)
@@ -65,7 +71,7 @@ public enum TokenEstimator {
             totalChars = jsonString.count
         }
 
-        let tokens = Int((Double(totalChars) / charsPerToken).rounded())
+        let tokens = estimate(charCount: totalChars)
         return (tokens, messages, cwd, contextWindow, modelId)
     }
 

@@ -1,12 +1,13 @@
 // ABOUTME: Integration test to verify Settings.swift uses centralized PercentageCalculator
 // Ensures the Claude token percentage calculation is correctly delegated to PercentageCalculator
 
-import XCTest
+import Testing
 @testable import Core
 
-final class SettingsIntegrationTest: XCTestCase {
+@Suite("SettingsIntegration")
+struct SettingsIntegrationTests {
 
-    func testClaudeTokenLimitPercentage_usesPercentageCalculator() {
+    @Test func claudeTokenLimitPercentage_usesPercentageCalculator() {
         // Verify that Settings.claudeTokenLimitPercentage uses PercentageCalculator
         let settings = SettingsStore()
         settings.claudeTokenLimit = 200000
@@ -24,20 +25,20 @@ final class SettingsIntegrationTest: XCTestCase {
         )
 
         // They should be identical
-        XCTAssertEqual(settingsResult, calculatorResult, accuracy: 0.01,
-                      "Settings.claudeTokenLimitPercentage should use PercentageCalculator internally")
+        #expect(abs(settingsResult - calculatorResult) < 0.01,
+               "Settings.claudeTokenLimitPercentage should use PercentageCalculator internally")
 
         // Verify the actual percentage value
-        XCTAssertEqual(settingsResult, 75.0, accuracy: 0.01,
-                      "150K tokens out of 200K limit should be 75%")
+        #expect(abs(settingsResult - 75.0) < 0.01,
+               "150K tokens out of 200K limit should be 75%")
     }
 
-    func testClaudeTokenLimitPercentage_behaviorMatchesOriginal() {
+    @Test func claudeTokenLimitPercentage_behaviorMatchesOriginal() {
         // Ensure the behavior matches the original manual calculation
         let settings = SettingsStore()
         settings.claudeTokenLimit = 200000
 
-        let testCases = [
+        let testCases: [(tokens: Int, expected: Double)] = [
             (tokens: 0, expected: 0.0),
             (tokens: 50000, expected: 25.0),
             (tokens: 100000, expected: 50.0),
@@ -50,10 +51,10 @@ final class SettingsIntegrationTest: XCTestCase {
             let result = settings.claudeTokenLimitPercentage(currentTokens: tokens)
             let originalCalculation = (Double(tokens) / Double(settings.claudeTokenLimit)) * 100.0
 
-            XCTAssertEqual(result, expected, accuracy: 0.01,
-                          "Failed for \(tokens) tokens: expected \(expected)%, got \(result)%")
-            XCTAssertEqual(result, originalCalculation, accuracy: 0.01,
-                          "Should match original manual calculation for \(tokens) tokens")
+            #expect(abs(result - expected) < 0.01,
+                   "Failed for \(tokens) tokens: expected \(expected)%, got \(result)%")
+            #expect(abs(result - originalCalculation) < 0.01,
+                   "Should match original manual calculation for \(tokens) tokens")
         }
     }
 }

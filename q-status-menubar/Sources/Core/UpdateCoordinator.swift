@@ -237,11 +237,8 @@ public final class UpdateCoordinator: @unchecked Sendable {
             // Compute per-session cost with model-specific override when available
             let rate = self.settings.modelPricing[s.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
             let cost = CostEstimator.estimateUSD(tokens: s.tokensUsed, ratePer1k: rate)
-            // Use 175k base for context usage percent (per Q CLI display)
-            let contextBase = 175_000
-            // Use PercentageCalculator for consistent percentage calculation
-            let usage175 = PercentageCalculator.calculateTokenPercentage(tokens: s.tokensUsed, limit: contextBase)
-            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: contextBase, usagePercent: usage175, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
+            // Preserve per-session context window from the data source
+            return SessionSummary(id: s.id, cwd: s.cwd, tokensUsed: s.tokensUsed, contextWindow: s.contextWindow, usagePercent: s.usagePercent, messageCount: s.messageCount, lastActivity: s.lastActivity, state: state, internalRowID: s.internalRowID, hasCompactionIndicators: hasMarker, modelId: s.modelId, costUSD: cost)
         }
         viewModel.sessions = mapped
         // Global totals for header
@@ -433,14 +430,10 @@ public final class UpdateCoordinator: @unchecked Sendable {
                     group.addTask { [weak self] in
                         guard let self else { return s }
                         if let details = try? await self.reader.fetchSessionDetail(key: s.id) {
-                            let ctxBase = 175_000
-                            let tokens = details.summary.tokensUsed
-                            // Use PercentageCalculator for consistent percentage calculation
-                            let usage = PercentageCalculator.calculateTokenPercentage(tokens: tokens, limit: ctxBase)
-                            let cwd = details.summary.cwd
-                            let rate = self.settings.modelPricing[details.summary.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
-                            let cost = CostEstimator.estimateUSD(tokens: tokens, ratePer1k: rate)
-                            return SessionSummary(id: s.id, cwd: cwd, tokensUsed: tokens, contextWindow: ctxBase, usagePercent: usage, messageCount: details.summary.messageCount, lastActivity: details.summary.lastActivity, state: usage >= 100 ? .critical : (usage >= 90 ? .warn : .normal), internalRowID: s.internalRowID, hasCompactionIndicators: s.hasCompactionIndicators, modelId: details.summary.modelId, costUSD: cost)
+                            let d = details.summary
+                            let rate = self.settings.modelPricing[d.modelId ?? ""] ?? self.settings.costRatePer1kTokensUSD
+                            let cost = CostEstimator.estimateUSD(tokens: d.tokensUsed, ratePer1k: rate)
+                            return SessionSummary(id: s.id, cwd: d.cwd, tokensUsed: d.tokensUsed, contextWindow: d.contextWindow, usagePercent: d.usagePercent, messageCount: d.messageCount, lastActivity: d.lastActivity, state: d.state, internalRowID: s.internalRowID, hasCompactionIndicators: s.hasCompactionIndicators, modelId: d.modelId, costUSD: cost)
                         }
                         return s
                     }

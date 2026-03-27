@@ -1,10 +1,12 @@
 // ABOUTME: Tests for SessionBlockCalculator - validates session block grouping algorithm
 // This file contains comprehensive tests for the 5-hour session block calculator
 
-import XCTest
+import Testing
+import Foundation
 @testable import Core
 
-final class SessionBlockCalculatorTests: XCTestCase {
+@Suite("SessionBlockCalculator")
+struct SessionBlockCalculatorTests {
 
     // MARK: - Test Helpers
 
@@ -56,12 +58,12 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
     // MARK: - Basic Functionality Tests
 
-    func testEmptyEntries() {
+    @Test func emptyEntries() {
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: [])
-        XCTAssertEqual(blocks.count, 0, "Should return empty array for empty entries")
+        #expect(blocks.count == 0, "Should return empty array for empty entries")
     }
 
-    func testSingleBlockWithinFiveHours() {
+    @Test func singleBlockWithinFiveHours() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -71,15 +73,15 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create single block for entries within 5 hours")
-        XCTAssertEqual(blocks[0].startTime, baseTime, "Block should start at first entry time (floored)")
-        XCTAssertEqual(blocks[0].entries.count, 3, "Block should contain all 3 entries")
-        XCTAssertEqual(blocks[0].tokenCounts.inputTokens, 3000, "Should aggregate input tokens")
-        XCTAssertEqual(blocks[0].tokenCounts.outputTokens, 1500, "Should aggregate output tokens")
-        XCTAssertEqual(blocks[0].costUSD, 0.03, accuracy: 0.001, "Should aggregate costs")
+        #expect(blocks.count == 1, "Should create single block for entries within 5 hours")
+        #expect(blocks[0].startTime == baseTime, "Block should start at first entry time (floored)")
+        #expect(blocks[0].entries.count == 3, "Block should contain all 3 entries")
+        #expect(blocks[0].tokenCounts.inputTokens == 3000, "Should aggregate input tokens")
+        #expect(blocks[0].tokenCounts.outputTokens == 1500, "Should aggregate output tokens")
+        #expect(abs(blocks[0].costUSD - 0.03) < 0.001, "Should aggregate costs")
     }
 
-    func testMultipleBlocksSpanningMoreThanFiveHours() {
+    @Test func multipleBlocksSpanningMoreThanFiveHours() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -88,15 +90,15 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 3, "Should create first block, gap block, and second block")
-        XCTAssertEqual(blocks[0].entries.count, 1, "First block should have 1 entry")
-        XCTAssertTrue(blocks[1].isGap, "Second block should be a gap block")
-        XCTAssertEqual(blocks[2].entries.count, 1, "Third block should have 1 entry")
+        #expect(blocks.count == 3, "Should create first block, gap block, and second block")
+        #expect(blocks[0].entries.count == 1, "First block should have 1 entry")
+        #expect(blocks[1].isGap, "Second block should be a gap block")
+        #expect(blocks[2].entries.count == 1, "Third block should have 1 entry")
     }
 
     // MARK: - Gap Detection Tests
 
-    func testGapBlockCreation() {
+    @Test func gapBlockCreation() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -106,14 +108,14 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 3, "Should create first block, gap block, and second block")
-        XCTAssertEqual(blocks[0].entries.count, 2, "First block should have 2 entries")
-        XCTAssertTrue(blocks[1].isGap, "Second block should be a gap block")
-        XCTAssertEqual(blocks[1].entries.count, 0, "Gap block should have no entries")
-        XCTAssertEqual(blocks[2].entries.count, 1, "Third block should have 1 entry")
+        #expect(blocks.count == 3, "Should create first block, gap block, and second block")
+        #expect(blocks[0].entries.count == 2, "First block should have 2 entries")
+        #expect(blocks[1].isGap, "Second block should be a gap block")
+        #expect(blocks[1].entries.count == 0, "Gap block should have no entries")
+        #expect(blocks[2].entries.count == 1, "Third block should have 1 entry")
     }
 
-    func testNoGapBlockForShortGaps() {
+    @Test func noGapBlockForShortGaps() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -122,28 +124,28 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create single block without gap")
-        XCTAssertEqual(blocks[0].entries.count, 2, "Block should contain both entries")
+        #expect(blocks.count == 1, "Should create single block without gap")
+        #expect(blocks[0].entries.count == 2, "Block should contain both entries")
     }
 
     // MARK: - Time Handling Tests
 
-    func testFloorToHour() {
+    @Test func floorToHour() {
         let entryTime = createDate(year: 2024, month: 1, day: 1, hour: 10, minute: 55, second: 30)
         let expectedStartTime = createDate(year: 2024, month: 1, day: 1, hour: 10, minute: 0, second: 0)
         let entries = [createMockEntry(timestamp: entryTime)]
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create one block")
-        XCTAssertEqual(blocks[0].startTime, expectedStartTime, "Block start time should be floored to hour")
+        #expect(blocks.count == 1, "Should create one block")
+        #expect(blocks[0].startTime == expectedStartTime, "Block start time should be floored to hour")
 
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = TimeZone(identifier: "UTC")
-        XCTAssertEqual(blocks[0].id, formatter.string(from: expectedStartTime), "Block ID should use floored time")
+        #expect(blocks[0].id == formatter.string(from: expectedStartTime), "Block ID should use floored time")
     }
 
-    func testSortingUnsortedEntries() {
+    @Test func sortingUnsortedEntries() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime.addingTimeInterval(2 * 3600)), // 2 hours later
@@ -153,21 +155,21 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create single block")
-        XCTAssertEqual(blocks[0].entries.count, 3, "Block should contain all entries")
+        #expect(blocks.count == 1, "Should create single block")
+        #expect(blocks[0].entries.count == 3, "Block should contain all entries")
 
         // Verify entries are sorted
         if let firstDate = blocks[0].entries[0].date,
            let secondDate = blocks[0].entries[1].date,
            let thirdDate = blocks[0].entries[2].date {
-            XCTAssertLessThan(firstDate, secondDate, "Entries should be sorted")
-            XCTAssertLessThan(secondDate, thirdDate, "Entries should be sorted")
+            #expect(firstDate < secondDate, "Entries should be sorted")
+            #expect(secondDate < thirdDate, "Entries should be sorted")
         }
     }
 
     // MARK: - Custom Duration Tests
 
-    func testCustomSessionDuration() {
+    @Test func customSessionDuration() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -177,13 +179,13 @@ final class SessionBlockCalculatorTests: XCTestCase {
         // Test with 2-hour duration
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries, sessionDurationHours: 2)
 
-        XCTAssertEqual(blocks.count, 3, "Should create first block, gap block, and second block with 2-hour duration")
-        XCTAssertEqual(blocks[0].entries.count, 1, "First block should have 1 entry")
-        XCTAssertTrue(blocks[1].isGap, "Second block should be a gap block")
-        XCTAssertEqual(blocks[2].entries.count, 1, "Third block should have 1 entry")
+        #expect(blocks.count == 3, "Should create first block, gap block, and second block with 2-hour duration")
+        #expect(blocks[0].entries.count == 1, "First block should have 1 entry")
+        #expect(blocks[1].isGap, "Second block should be a gap block")
+        #expect(blocks[2].entries.count == 1, "Third block should have 1 entry")
     }
 
-    func testVeryShortDuration() {
+    @Test func veryShortDuration() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime),
@@ -194,15 +196,15 @@ final class SessionBlockCalculatorTests: XCTestCase {
         // Test with 0.5 hour (30 minutes) duration
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries, sessionDurationHours: 0.5)
 
-        XCTAssertEqual(blocks.count, 3, "Should create multiple blocks with short duration")
-        XCTAssertEqual(blocks[0].entries.count, 2, "First block should have 2 entries within 30 minutes")
-        XCTAssertTrue(blocks[1].isGap, "Should have gap block")
-        XCTAssertEqual(blocks[2].entries.count, 1, "Last block should have 1 entry")
+        #expect(blocks.count == 3, "Should create multiple blocks with short duration")
+        #expect(blocks[0].entries.count == 2, "First block should have 2 entries within 30 minutes")
+        #expect(blocks[1].isGap, "Should have gap block")
+        #expect(blocks[2].entries.count == 1, "Last block should have 1 entry")
     }
 
     // MARK: - Token and Cost Aggregation Tests
 
-    func testTokenAggregation() {
+    @Test func tokenAggregation() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime, inputTokens: 1000, outputTokens: 500),
@@ -212,13 +214,13 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create single block")
-        XCTAssertEqual(blocks[0].tokenCounts.inputTokens, 4500, "Should sum input tokens")
-        XCTAssertEqual(blocks[0].tokenCounts.outputTokens, 2250, "Should sum output tokens")
-        XCTAssertEqual(blocks[0].tokenCounts.totalTokens, 6750, "Should calculate total tokens correctly")
+        #expect(blocks.count == 1, "Should create single block")
+        #expect(blocks[0].tokenCounts.inputTokens == 4500, "Should sum input tokens")
+        #expect(blocks[0].tokenCounts.outputTokens == 2250, "Should sum output tokens")
+        #expect(blocks[0].tokenCounts.totalTokens == 6750, "Should calculate total tokens correctly")
     }
 
-    func testCacheTokenHandling() {
+    @Test func cacheTokenHandling() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
 
         let formatter = ISO8601DateFormatter()
@@ -246,12 +248,12 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: [entry])
 
-        XCTAssertEqual(blocks[0].tokenCounts.cacheCreationInputTokens, 100, "Should track cache creation tokens")
-        XCTAssertEqual(blocks[0].tokenCounts.cacheReadInputTokens, 200, "Should track cache read tokens")
-        XCTAssertEqual(blocks[0].tokenCounts.totalTokens, 1800, "Should include cache tokens in total")
+        #expect(blocks[0].tokenCounts.cacheCreationInputTokens == 100, "Should track cache creation tokens")
+        #expect(blocks[0].tokenCounts.cacheReadInputTokens == 200, "Should track cache read tokens")
+        #expect(blocks[0].tokenCounts.totalTokens == 1800, "Should include cache tokens in total")
     }
 
-    func testModelAggregation() {
+    @Test func modelAggregation() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime, model: "claude-3-5-sonnet"),
@@ -261,15 +263,15 @@ final class SessionBlockCalculatorTests: XCTestCase {
 
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
 
-        XCTAssertEqual(blocks.count, 1, "Should create single block")
-        XCTAssertEqual(blocks[0].models.count, 2, "Should have 2 unique models")
-        XCTAssertTrue(blocks[0].models.contains("claude-3-5-sonnet"), "Should contain sonnet model")
-        XCTAssertTrue(blocks[0].models.contains("claude-3-opus"), "Should contain opus model")
+        #expect(blocks.count == 1, "Should create single block")
+        #expect(blocks[0].models.count == 2, "Should have 2 unique models")
+        #expect(blocks[0].models.contains("claude-3-5-sonnet"), "Should contain sonnet model")
+        #expect(blocks[0].models.contains("claude-3-opus"), "Should contain opus model")
     }
 
     // MARK: - Burn Rate Tests
 
-    func testBurnRateCalculation() {
+    @Test func burnRateCalculation() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
         let entries = [
             createMockEntry(timestamp: baseTime, inputTokens: 1000, outputTokens: 500, costUSD: 0.01),
@@ -279,15 +281,15 @@ final class SessionBlockCalculatorTests: XCTestCase {
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
         let burnRate = BurnRateCalculator.calculateBurnRate(for: blocks[0])
 
-        XCTAssertNotNil(burnRate, "Should calculate burn rate")
+        #expect(burnRate != nil, "Should calculate burn rate")
         if let burnRate = burnRate {
-            XCTAssertEqual(burnRate.tokensPerMinute, 4500, accuracy: 0.1, "Should calculate 4500 tokens/minute")
-            XCTAssertEqual(burnRate.tokensPerMinuteForIndicator, 4500, accuracy: 0.1, "Should calculate indicator rate")
-            XCTAssertEqual(burnRate.costPerHour, 1.8, accuracy: 0.01, "Should calculate $1.80/hour")
+            #expect(abs(burnRate.tokensPerMinute - 4500) < 0.1, "Should calculate 4500 tokens/minute")
+            #expect(abs(burnRate.tokensPerMinuteForIndicator - 4500) < 0.1, "Should calculate indicator rate")
+            #expect(abs(burnRate.costPerHour - 1.8) < 0.01, "Should calculate $1.80/hour")
         }
     }
 
-    func testBurnRateWithCacheTokens() {
+    @Test func burnRateWithCacheTokens() {
         let baseTime = createDate(year: 2024, month: 1, day: 1, hour: 10)
 
         let formatter = ISO8601DateFormatter()
@@ -337,14 +339,14 @@ final class SessionBlockCalculatorTests: XCTestCase {
         let blocks = SessionBlockCalculator.identifySessionBlocks(entries: entries)
         let burnRate = BurnRateCalculator.calculateBurnRate(for: blocks[0])
 
-        XCTAssertNotNil(burnRate, "Should calculate burn rate")
+        #expect(burnRate != nil, "Should calculate burn rate")
         if let burnRate = burnRate {
-            XCTAssertEqual(burnRate.tokensPerMinute, 12200, accuracy: 0.1, "Should include all tokens")
-            XCTAssertEqual(burnRate.tokensPerMinuteForIndicator, 2200, accuracy: 0.1, "Should exclude cache tokens for indicator")
+            #expect(abs(burnRate.tokensPerMinute - 12200) < 0.1, "Should include all tokens")
+            #expect(abs(burnRate.tokensPerMinuteForIndicator - 2200) < 0.1, "Should exclude cache tokens for indicator")
         }
     }
 
-    func testBurnRateReturnsNilForEmptyBlock() {
+    @Test func burnRateReturnsNilForEmptyBlock() {
         let block = SessionBlock(
             id: "test",
             startTime: Date(),
@@ -354,10 +356,10 @@ final class SessionBlockCalculatorTests: XCTestCase {
         )
 
         let burnRate = BurnRateCalculator.calculateBurnRate(for: block)
-        XCTAssertNil(burnRate, "Should return nil for empty block")
+        #expect(burnRate == nil, "Should return nil for empty block")
     }
 
-    func testBurnRateReturnsNilForGapBlock() {
+    @Test func burnRateReturnsNilForGapBlock() {
         let block = SessionBlock(
             id: "gap-test",
             startTime: Date(),
@@ -366,12 +368,12 @@ final class SessionBlockCalculatorTests: XCTestCase {
         )
 
         let burnRate = BurnRateCalculator.calculateBurnRate(for: block)
-        XCTAssertNil(burnRate, "Should return nil for gap block")
+        #expect(burnRate == nil, "Should return nil for gap block")
     }
 
     // MARK: - Projection Tests
 
-    func testProjectedUsageReturnsNilForInactiveBlock() {
+    @Test func projectedUsageReturnsNilForInactiveBlock() {
         let block = SessionBlock(
             id: "test",
             startTime: Date(),
@@ -381,10 +383,10 @@ final class SessionBlockCalculatorTests: XCTestCase {
         )
 
         let projection = ProjectedUsageCalculator.projectBlockUsage(for: block)
-        XCTAssertNil(projection, "Should return nil for inactive block")
+        #expect(projection == nil, "Should return nil for inactive block")
     }
 
-    func testProjectedUsageReturnsNilForGapBlock() {
+    @Test func projectedUsageReturnsNilForGapBlock() {
         let block = SessionBlock(
             id: "gap-test",
             startTime: Date(),
@@ -394,12 +396,12 @@ final class SessionBlockCalculatorTests: XCTestCase {
         )
 
         let projection = ProjectedUsageCalculator.projectBlockUsage(for: block)
-        XCTAssertNil(projection, "Should return nil for gap block")
+        #expect(projection == nil, "Should return nil for gap block")
     }
 
     // MARK: - Filter Tests
 
-    func testFilterRecentBlocks() {
+    @Test func filterRecentBlocks() {
         let now = Date()
         let recentTime = now.addingTimeInterval(-2 * 24 * 3600) // 2 days ago
         let oldTime = now.addingTimeInterval(-5 * 24 * 3600)    // 5 days ago
@@ -421,11 +423,11 @@ final class SessionBlockCalculatorTests: XCTestCase {
         let blocks = [recentBlock, oldBlock]
         let filtered = SessionBlockFilter.filterRecentBlocks(blocks)
 
-        XCTAssertEqual(filtered.count, 1, "Should filter out old blocks")
-        XCTAssertEqual(filtered[0].id, "recent", "Should keep recent block")
+        #expect(filtered.count == 1, "Should filter out old blocks")
+        #expect(filtered[0].id == "recent", "Should keep recent block")
     }
 
-    func testFilterIncludesActiveBlocks() {
+    @Test func filterIncludesActiveBlocks() {
         let now = Date()
         let oldTime = now.addingTimeInterval(-10 * 24 * 3600) // 10 days ago
 
@@ -439,11 +441,11 @@ final class SessionBlockCalculatorTests: XCTestCase {
         let blocks = [oldActiveBlock]
         let filtered = SessionBlockFilter.filterRecentBlocks(blocks, days: 3)
 
-        XCTAssertEqual(filtered.count, 1, "Should include active blocks regardless of age")
-        XCTAssertTrue(filtered[0].isActive, "Block should be active")
+        #expect(filtered.count == 1, "Should include active blocks regardless of age")
+        #expect(filtered[0].isActive, "Block should be active")
     }
 
-    func testFilterWithCustomDays() {
+    @Test func filterWithCustomDays() {
         let now = Date()
         let withinRange = now.addingTimeInterval(-4 * 24 * 3600)  // 4 days ago
         let outsideRange = now.addingTimeInterval(-8 * 24 * 3600) // 8 days ago
@@ -465,7 +467,7 @@ final class SessionBlockCalculatorTests: XCTestCase {
         let blocks = [withinBlock, outsideBlock]
         let filtered = SessionBlockFilter.filterRecentBlocks(blocks, days: 7)
 
-        XCTAssertEqual(filtered.count, 1, "Should respect custom day parameter")
-        XCTAssertEqual(filtered[0].id, "within", "Should keep block within range")
+        #expect(filtered.count == 1, "Should respect custom day parameter")
+        #expect(filtered[0].id == "within", "Should keep block within range")
     }
 }

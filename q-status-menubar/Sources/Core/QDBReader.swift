@@ -86,14 +86,44 @@ public actor QDBReader: DataSource {
         guard let dbPool else { throw NSError(domain: "QDBReader", code: 1, userInfo: [NSLocalizedDescriptionKey: "DB not open"]) }
 
         let s = self.schema
+        let supportsJSON1 = await json1Available()
         return try await dbPool.read { db in
             let now = Date()
             guard let ct = s.conversationsTable, let keyCol = s.keyColumn, let valueCol = s.valueColumn else {
                 return UsageSnapshot(timestamp: now, tokensUsed: 0, messageCount: 0, conversationId: nil, sessionLimitOverride: nil)
             }
 
-            // Latest conversation by rowid (most recently inserted/updated)
-            let row = try Row.fetchOne(db, sql: "SELECT rowid, \(rawIdent(keyCol)) AS k, \(rawIdent(valueCol)) AS v FROM \(rawIdent(ct)) ORDER BY rowid DESC LIMIT 1")
+            let row: Row?
+            if supportsJSON1 {
+                // Find conversation with most recent activity timestamp
+                let sql = """
+                WITH latest_activity AS (
+                  SELECT c.rowid, c.\(rawIdent(keyCol)) AS k, c.\(rawIdent(valueCol)) AS v,
+                    MAX(
+                      COALESCE(
+                        json_extract(h.value,'$.assistant.timestamp'),
+                        json_extract(h.value,'$.assistant.created_at'),
+                        json_extract(h.value,'$.user.timestamp'),
+                        json_extract(h.value,'$.user.created_at')
+                      )
+                    ) AS last_ts
+                  FROM \(rawIdent(ct)) c
+                  LEFT JOIN json_each(
+                    CASE
+                      WHEN json_type(json_extract(c.\(rawIdent(valueCol)),'$.history')) = 'array'
+                      THEN json_extract(c.\(rawIdent(valueCol)),'$.history')
+                      ELSE '[]'
+                    END
+                  ) h ON 1
+                  GROUP BY c.rowid
+                )
+                SELECT * FROM latest_activity ORDER BY last_ts DESC, rowid DESC LIMIT 1
+                """
+                row = try Row.fetchOne(db, sql: sql)
+            } else {
+                // Fallback: rowid order when JSON1 is unavailable
+                row = try Row.fetchOne(db, sql: "SELECT rowid, \(rawIdent(keyCol)) AS k, \(rawIdent(valueCol)) AS v FROM \(rawIdent(ct)) ORDER BY rowid DESC LIMIT 1")
+            }
             let convId: String? = row?["k"]
             let convJSON: String? = row?["v"]
 
@@ -318,10 +348,44 @@ public actor QDBReader: DataSource {
     public func sessionCount(activeOnly: Bool = false) async throws -> Int {
         try await openIfNeeded()
         guard let dbPool else { return 0 }
-        // Always use conversations table (history table is never populated)
+        if !activeOnly {
+            return try await dbPool.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations") ?? 0
+            }
+        }
+        // activeOnly: count conversations with activity in last 7 days
+        let supportsJSON1 = await json1Available()
+        if supportsJSON1 {
+            let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7*24*3600))
+            return try await dbPool.read { db in
+                let sql = """
+                SELECT COUNT(*) FROM (
+                  SELECT c.key,
+                    MAX(
+                      COALESCE(
+                        json_extract(h.value,'$.assistant.timestamp'),
+                        json_extract(h.value,'$.assistant.created_at'),
+                        json_extract(h.value,'$.user.timestamp'),
+                        json_extract(h.value,'$.user.created_at')
+                      )
+                    ) AS last_ts
+                  FROM conversations c
+                  LEFT JOIN json_each(
+                    CASE
+                      WHEN json_type(json_extract(c.value,'$.history')) = 'array'
+                      THEN json_extract(c.value,'$.history')
+                      ELSE '[]'
+                    END
+                  ) h ON 1
+                  GROUP BY c.key
+                  HAVING last_ts >= ?
+                )
+                """
+                return try Int.fetchOne(db, sql: sql, arguments: [cutoff]) ?? 0
+            }
+        }
+        // Fallback: return total count (can't filter without JSON1)
         return try await dbPool.read { db in
-            // For now, activeOnly filter would need JSON parsing of timestamps
-            // Since history table is unused, we can't filter by activity time reliably
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations") ?? 0
         }
     }
@@ -370,7 +434,7 @@ public actor QDBReader: DataSource {
                 let totalSessions: Int = agg?["total_sessions"] ?? 0
                 let totalChars: Int = agg?["total_chars"] ?? 0
                 let nearCount: Int = agg?["near_count"] ?? 0
-                let totalTokens = Int((((Double(totalChars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
+                let totalTokens = TokenEstimator.estimate(charCount: totalChars)
 
                 // Top heavy sessions by estimated tokens
                 let topSQL = """
@@ -397,7 +461,7 @@ public actor QDBReader: DataSource {
                     let key: String = r["key"] ?? ""
                     let chars: Int = r["chars"] ?? 0
                     let ctx: Int = r["ctx"] ?? self.defaultContextWindow
-                    let tokens = Int((((Double(chars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
+                    let tokens = TokenEstimator.estimate(charCount: chars)
                     // Cap at 99.9% unless truly at or above limit
                     // Note: This percentage calculation remains here (not in PercentageCalculator)
                     // because QDBReader is a foundation layer that PercentageCalculator depends on.
@@ -413,7 +477,7 @@ public actor QDBReader: DataSource {
             return try await dbPool.read { db in
                 let totalSessions = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations") ?? 0
                 let totalChars = try Int.fetchOne(db, sql: "SELECT SUM(length(value)) FROM conversations") ?? 0
-                let totalTokens = Int((((Double(totalChars)/4.0) + 5.0) / 10.0).rounded(.down) * 10.0)
+                let totalTokens = TokenEstimator.estimate(charCount: totalChars)
                 return GlobalMetrics(totalSessions: totalSessions, totalTokens: totalTokens, sessionsNearLimit: 0, topHeavySessions: [])
             }
         }
@@ -466,37 +530,40 @@ public actor QDBReader: DataSource {
         }
     }
 
-    // Monthly messages across all sessions.
-    // History table is never populated, so we estimate from conversations table
+    // Monthly messages across all sessions, filtered to current month only.
     public func fetchMonthlyMessageCount(now: Date = Date()) async throws -> Int {
         try await openIfNeeded()
         guard let dbPool else { return 0 }
-        
-        // Since history table is unused, estimate monthly messages from conversations
-        // This counts total messages in all conversations (not ideal but better than 0)
+
         let supportsJSON1 = await json1Available()
         if supportsJSON1 {
+            let cal = Calendar.current
+            let startOfMonth = cal.date(from: cal.dateComponents([.year,.month], from: now)) ?? cal.startOfDay(for: now)
+            let monthStr = ISO8601DateFormatter().string(from: startOfMonth)
             return try await dbPool.read { db in
-                // Sum up message counts from all conversations, handling both array and object types
+                // Count individual history entries whose timestamp falls in the current month
                 let sql = """
-                SELECT SUM(
-                  CASE 
-                    WHEN json_type(json_extract(value,'$.history')) = 'array' 
-                    THEN COALESCE(json_array_length(json_extract(value,'$.history')), 0)
-                    WHEN json_type(json_extract(value,'$.history')) = 'object'
-                    THEN COALESCE(json_array_length(json_extract(value,'$.history'), '$'), 0)
-                    ELSE 0
-                  END
-                ) 
-                FROM conversations
+                SELECT COUNT(*) FROM conversations c,
+                  json_each(
+                    CASE
+                      WHEN json_type(json_extract(c.value,'$.history')) = 'array'
+                      THEN json_extract(c.value,'$.history')
+                      ELSE '[]'
+                    END
+                  ) h
+                WHERE COALESCE(
+                  json_extract(h.value,'$.assistant.timestamp'),
+                  json_extract(h.value,'$.assistant.created_at'),
+                  json_extract(h.value,'$.user.timestamp'),
+                  json_extract(h.value,'$.user.created_at')
+                ) >= ?
                 """
-                return try Int.fetchOne(db, sql: sql) ?? 0
+                return try Int.fetchOne(db, sql: sql, arguments: [monthStr]) ?? 0
             }
         }
-        // Fallback: estimate based on conversation count
+        // Fallback: estimate based on conversation count (no timestamp filtering possible)
         return try await dbPool.read { db in
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM conversations") ?? 0
-            // Rough estimate: assume 20 messages per conversation on average
             return count * 20
         }
     }
@@ -574,84 +641,73 @@ public actor QDBReader: DataSource {
         guard await json1Available() else { return [] }
         try await openIfNeeded()
         guard let dbPool else { return [] }
-        // Use history to select directories active in each period; sum current conversation tokens by model
+        let iso8601 = ISO8601DateFormatter()
         let cal = Calendar.current
         let startOfDay = cal.startOfDay(for: now)
         let startOfWeek = cal.date(from: cal.dateComponents([.yearForWeekOfYear,.weekOfYear], from: now)) ?? startOfDay
         let startOfMonth = cal.date(from: cal.dateComponents([.year,.month], from: now)) ?? startOfDay
         let startOfYear = cal.date(from: cal.dateComponents([.year], from: now)) ?? startOfDay
-        let dayEpoch = Int64(startOfDay.timeIntervalSince1970)
-        let weekEpoch = Int64(startOfWeek.timeIntervalSince1970)
-        let monthEpoch = Int64(startOfMonth.timeIntervalSince1970)
-        let yearEpoch = Int64(startOfYear.timeIntervalSince1970)
-        guard let ct = schema.conversationsTable, let keyCol = schema.keyColumn, let valueCol = schema.valueColumn else { return [] }
+        let dayStr = iso8601.string(from: startOfDay)
+        let weekStr = iso8601.string(from: startOfWeek)
+        let monthStr = iso8601.string(from: startOfMonth)
+        let yearStr = iso8601.string(from: startOfYear)
         return try await dbPool.read { db in
-            // Precompute per-dir tokens + model from conversations
-            let convSQL = """
-            SELECT 
-              \(rawIdent(keyCol)) AS cwd,
-              COALESCE(json_extract(\(rawIdent(valueCol)),'$.model_info.model_id'), NULL) AS model_id,
-              COALESCE(length(json_extract(\(rawIdent(valueCol)),'$.history')),0) AS h_chars,
-              COALESCE(length(json_extract(\(rawIdent(valueCol)),'$.context_manager.context_files')),0) AS ctx_chars,
-              COALESCE(length(json_extract(\(rawIdent(valueCol)),'$.tool_manager')),0) AS tools_chars,
-              COALESCE(length(json_extract(\(rawIdent(valueCol)),'$.system_prompts')),0) AS sys_chars,
-              COALESCE(length(\(rawIdent(valueCol))),0) AS fallback_chars
-            FROM \(rawIdent(ct));
+            // Expand history entries with timestamps, filter by period boundaries
+            let sql = """
+            WITH hist AS (
+              SELECT
+                json_extract(c.value,'$.model_info.model_id') AS model_id,
+                COALESCE(
+                  json_extract(h.value,'$.assistant.timestamp'),
+                  json_extract(h.value,'$.assistant.created_at'),
+                  json_extract(h.value,'$.user.timestamp'),
+                  json_extract(h.value,'$.user.created_at')
+                ) AS ts,
+                CAST(((length(h.value)/4.0 + 5.0)/10.0) AS INTEGER)*10 AS tokens
+              FROM conversations c, json_each(
+                CASE
+                  WHEN json_type(json_extract(c.value,'$.history')) = 'array'
+                  THEN json_extract(c.value,'$.history')
+                  ELSE '[]'
+                END
+              ) h
+            )
+            SELECT model_id,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS day_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS week_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS month_tokens,
+              SUM(CASE WHEN ts >= ? THEN tokens ELSE 0 END) AS year_tokens,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS day_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS week_msgs,
+              SUM(CASE WHEN ts >= ? THEN 1 ELSE 0 END) AS month_msgs
+            FROM hist
+            WHERE ts IS NOT NULL
+            GROUP BY model_id;
             """
-            let convRows = try Row.fetchAll(db, sql: convSQL)
-            var dirTokens: [String: (model: String?, tokens: Int)] = [:]
-            for r in convRows {
-                let cwd: String = r["cwd"] ?? ""
+            let args: [DatabaseValueConvertible] = [dayStr, weekStr, monthStr, yearStr, dayStr, weekStr, monthStr]
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            let defaultRate = 0.0025
+            var out: [PeriodByModel] = []
+            for r in rows {
                 let mid: String? = r["model_id"]
-                let h: Int = r["h_chars"] ?? 0
-                let cx: Int = r["ctx_chars"] ?? 0
-                let tl: Int = r["tools_chars"] ?? 0
-                let sy: Int = r["sys_chars"] ?? 0
-                let fb: Int = r["fallback_chars"] ?? 0
-                let br = TokenEstimator.Breakdown(historyChars: h, contextFilesChars: cx, toolsChars: tl, systemChars: sy, fallbackChars: fb)
-                dirTokens[cwd] = (mid, TokenEstimator.estimateTokens(breakdown: br))
+                let dTok: Int = r["day_tokens"] ?? 0
+                let wTok: Int = r["week_tokens"] ?? 0
+                let mTok: Int = r["month_tokens"] ?? 0
+                let yTok: Int = r["year_tokens"] ?? 0
+                let dMsg: Int = r["day_msgs"] ?? 0
+                let wMsg: Int = r["week_msgs"] ?? 0
+                let mMsg: Int = r["month_msgs"] ?? 0
+                out.append(PeriodByModel(
+                    modelId: mid,
+                    dayTokens: dTok, weekTokens: wTok, monthTokens: mTok, yearTokens: yTok,
+                    dayMessages: dMsg, weekMessages: wMsg, monthMessages: mMsg,
+                    dayCost: CostEstimator.estimateUSD(tokens: dTok, ratePer1k: defaultRate),
+                    weekCost: CostEstimator.estimateUSD(tokens: wTok, ratePer1k: defaultRate),
+                    monthCost: CostEstimator.estimateUSD(tokens: mTok, ratePer1k: defaultRate),
+                    yearCost: CostEstimator.estimateUSD(tokens: yTok, ratePer1k: defaultRate)
+                ))
             }
-            // Since history table is unused, consider all directories as potentially active
-            // In a real implementation, we'd need to track session timestamps differently
-            let allDirs = Set(dirTokens.keys)
-            let dDirs = allDirs  // All conversations considered for daily
-            let wDirs = allDirs  // All conversations considered for weekly  
-            let mDirs = allDirs  // All conversations considered for monthly
-            let yDirs = allDirs  // All conversations considered for yearly
-
-            // Aggregate by model
-            var byModel: [String?: (d:Int,w:Int,m:Int,y:Int, dm:Int, wm:Int, mm:Int)] = [:]
-            func add(model: String?, tokens: Int, to set: String) {
-                var rec = byModel[model] ?? (0,0,0,0,0,0,0)
-                switch set {
-                case "d": rec.0 += tokens; rec.4 += 1
-                case "w": rec.1 += tokens; rec.5 += 1
-                case "m": rec.2 += tokens; rec.6 += 1
-                case "y": rec.3 += tokens
-                default: break
-                }
-                byModel[model] = rec
-            }
-            for (cwd, val) in dirTokens {
-                if dDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "d") }
-                if wDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "w") }
-                if mDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "m") }
-                if yDirs.contains(cwd) { add(model: val.model, tokens: val.tokens, to: "y") }
-            }
-            // Calculate costs using default rate (this will be overridden by settings in UpdateCoordinator)
-            let defaultRate = 0.0025 // Default rate per 1k tokens
-            return byModel.map { (k,v) in
-                let dayCost = CostEstimator.estimateUSD(tokens: v.0, ratePer1k: defaultRate)
-                let weekCost = CostEstimator.estimateUSD(tokens: v.1, ratePer1k: defaultRate)
-                let monthCost = CostEstimator.estimateUSD(tokens: v.2, ratePer1k: defaultRate)
-                let yearCost = CostEstimator.estimateUSD(tokens: v.3, ratePer1k: defaultRate)
-                return PeriodByModel(
-                    modelId: k,
-                    dayTokens: v.0, weekTokens: v.1, monthTokens: v.2, yearTokens: v.3,
-                    dayMessages: v.4, weekMessages: v.5, monthMessages: v.6,
-                    dayCost: dayCost, weekCost: weekCost, monthCost: monthCost, yearCost: yearCost
-                )
-            }
+            return out
         }
     }
 
@@ -745,8 +801,6 @@ private func rawIdent(_ name: String) -> String {
 // MARK: - Token Estimation from JSON
 
 private func estimateTokensAndMessages(fromJSONString text: String) -> (tokens: Int, messages: Int, contextWindowTokens: Int?) {
-    // Rough token estimate: ~4 chars per token
-    let charsPerToken = 4.0
     var totalChars = 0
     var messages = 0
     var contextWindow: Int? = nil
@@ -755,7 +809,7 @@ private func estimateTokensAndMessages(fromJSONString text: String) -> (tokens: 
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
         // fallback to raw length
         totalChars = text.count
-        return (Int(Double(totalChars) / charsPerToken), messages, contextWindow)
+        return (TokenEstimator.estimate(charCount: totalChars), messages, contextWindow)
     }
 
     if let modelInfo = json["model_info"] as? [String: Any], let cw = modelInfo["context_window_tokens"] as? Int { contextWindow = cw }
@@ -769,7 +823,7 @@ private func estimateTokensAndMessages(fromJSONString text: String) -> (tokens: 
         totalChars += deepStringCharacterCount(json)
     }
 
-    let tokens = Int((Double(totalChars) / charsPerToken).rounded())
+    let tokens = TokenEstimator.estimate(charCount: totalChars)
     return (tokens, messages, contextWindow)
 }
 
