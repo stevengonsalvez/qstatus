@@ -1,0 +1,124 @@
+# .clan/manifest.yaml — qstatus Project Identity
+# Read by agents when entering project context. Machine-parseable.
+# Convention pointer only — does NOT store dynamic values (URLs, tokens).
+
+schema_version: 1
+
+project:
+  name: qstatus
+  repo: stevengonsalvez/qstatus
+  description: Native macOS menubar + CLI dashboard for real-time AI usage monitoring (Claude Code, Amazon Q, GitHub Copilot, Codex CLI)
+  label_prefix: qstatus
+
+stack:
+  menubar: Swift 5.9 + SwiftUI + AppKit (macOS 13+)
+  cli: Rust (ratatui TUI, SQLite via rusqlite)
+  statusline: TypeScript (ccstatusline, ink/react)
+  usage_lib: TypeScript (ccusage, bun)
+  database: SQLite (Amazon Q), JSONL (Claude Code, Codex CLI)
+  ci: GitHub Actions
+  packaging: Homebrew tap (stevengonsalvez/qstatus)
+
+providers:
+  # Data sources the menubar reads
+  - name: Amazon Q
+    type: sqlite
+    path: "~/Library/Application Support/amazon-q/data.sqlite3"
+    token_counting: estimated   # chars/4 — no native token counts in DB
+  - name: Claude Code
+    type: jsonl
+    path: "~/.config/claude/projects/**/*.jsonl OR ~/.claude/projects/**/*.jsonl"
+    token_counting: real        # costUSD + token fields in JSONL
+  - name: GitHub Copilot
+    type: api
+    endpoint: "https://api.github.com/copilot_internal/user"
+    auth: github_oauth_token    # stored in Keychain, fallback read from ~/.config/gh/hosts.yml
+    token_counting: quota       # percent_remaining only, no raw token counts
+  - name: Codex CLI
+    type: jsonl
+    path: "~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl"
+    token_counting: quota       # rate_limit % only, no per-message token counts
+
+merge_policy:
+  type: human_only
+  conditions:
+    - "Splinter (🐀) approved"
+    - "CI green (swift build + swift test)"
+    - "No unresolved review comments"
+  human_required: true
+  notes: "Steven merges. No auto-merge."
+
+agents:
+  primary_builders: [cantona]
+  primary_reviewer: splinter
+  primary_qa: velma
+  security: [splinter, zerocool]
+  ops: [popashot, tank]
+
+# Context routing — what each agent reads when entering the repo.
+# Keep paths relative to repo root.
+context:
+  always:
+    - README.md
+    - AGENTS.md                                # team roles + standing orders (if present)
+    - plans/qstatus-menubar-v2-spec.md         # current implementation spec (Splinter, 2026-03-27)
+    - plans/qstatus-production-redesign-blueprint.md   # long-term architecture blueprint
+  build:
+    - q-status-menubar/Sources/Core/DataSource.swift   # protocol contract
+    - q-status-menubar/Sources/Core/Models.swift       # domain types
+    - q-status-menubar/Sources/Core/TokenEstimator.swift  # canonical estimator
+    - q-status-menubar/Package.swift
+  review:
+    - plans/qstatus-menubar-v2-spec.md         # bug spec + acceptance criteria
+    - q-status-menubar/Tests/                  # test suite
+  test:
+    - q-status-menubar/Tests/CoreTests/
+  ops: []
+
+# Current work phases (update as phases complete)
+phases:
+  - id: phase1
+    name: "Fix 6 correctness bugs"
+    status: pr_open               # PR #4 — Splinter approved, awaiting merge
+    branch: fix/qstatus-menubar-v2-phase1
+    pr: 4
+    owner: cantona
+    issues: [5]                   # BUG-4 Unix int timestamp follow-up
+  - id: phase2
+    name: "Add GitHub Copilot Enterprise provider"
+    status: in_progress
+    branch: feat/qstatus-menubar-v2-phase2-copilot
+    owner: cantona
+    depends_on: phase1
+  - id: phase3
+    name: "Add Codex CLI provider"
+    status: planned
+    owner: cantona
+    depends_on: phase2
+
+# Architecture notes for agents working in this repo
+notes:
+  token_estimation: |
+    Amazon Q DB has no native token counts. All Q token figures are estimates
+    (chars/4). Always label them as estimates in UI. Do not present them as
+    precise token counts. Claude Code JSONL has real costUSD + token fields —
+    use those directly.
+  copilot_api: |
+    GitHub Copilot uses copilot_internal API (undocumented). Headers must
+    impersonate VSCode (vscode/1.96.2, GitHubCopilotChat/0.26.7).
+    Enterprise plans return monthly_quotas + limited_user_quotas fallback schema.
+    Both paths handled in CopilotUsageModels.swift.
+  period_metrics: |
+    Phase 1 fixed the critical bug where day/week/month metrics returned
+    all-time totals. All period queries now use timestamp-filtered SQL.
+    BUG-4 follow-up (issue #5): Unix int timestamp fallback not yet implemented.
+  tui_deferral: |
+    TUI extraction (qstatus-tui-kit for agents-in-a-box) is deferred to v3.
+    Do not start TUI refactoring until Phase 3 (Codex CLI) is complete.
+
+terminology:
+  session: "A single Claude/Q/Codex conversation thread"
+  session_block: "5-hour billing window (Claude Code plan feature)"
+  context_window: "Max token capacity for a session (per-model, from DB)"
+  usage_percent: "tokensUsed / contextWindow × 100"
+  period_metrics: "Aggregated usage filtered by time window (day/week/month/year)"
