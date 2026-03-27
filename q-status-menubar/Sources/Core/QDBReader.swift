@@ -484,7 +484,7 @@ public actor QDBReader: DataSource {
     }
 
     // Precise global totals grouped by model using per-category rounding to nearest 10, then summed.
-    public struct GlobalByModel: Sendable { public let modelId: String?; public let tokens: Int; public let messages: Int }
+    public typealias GlobalByModel = Core.GlobalByModel
     public func fetchGlobalTotalsByModel() async throws -> [GlobalByModel] {
         guard await json1Available() else { return [] }
         try await openIfNeeded()
@@ -531,6 +531,7 @@ public actor QDBReader: DataSource {
     }
 
     // Monthly messages across all sessions, filtered to current month only.
+    // Handles both ISO8601 string timestamps and Unix integer timestamps.
     public func fetchMonthlyMessageCount(now: Date = Date()) async throws -> Int {
         try await openIfNeeded()
         guard let dbPool else { return 0 }
@@ -540,8 +541,13 @@ public actor QDBReader: DataSource {
             let cal = Calendar.current
             let startOfMonth = cal.date(from: cal.dateComponents([.year,.month], from: now)) ?? cal.startOfDay(for: now)
             let monthStr = ISO8601DateFormatter().string(from: startOfMonth)
+            let monthUnix = Int(startOfMonth.timeIntervalSince1970)
             return try await dbPool.read { db in
-                // Count individual history entries whose timestamp falls in the current month
+                // Count individual history entries whose timestamp falls in the current month.
+                // Timestamps may be ISO8601 strings OR Unix integer seconds — handle both:
+                //   - ISO8601 strings compare lexicographically (>= monthStr)
+                //   - Unix integers compare numerically (>= monthUnix)
+                // typeof() distinguishes: 'text' for ISO strings, 'integer'/'real' for Unix.
                 let sql = """
                 SELECT COUNT(*) FROM conversations c,
                   json_each(
@@ -551,14 +557,21 @@ public actor QDBReader: DataSource {
                       ELSE '[]'
                     END
                   ) h
-                WHERE COALESCE(
-                  json_extract(h.value,'$.assistant.timestamp'),
-                  json_extract(h.value,'$.assistant.created_at'),
-                  json_extract(h.value,'$.user.timestamp'),
-                  json_extract(h.value,'$.user.created_at')
-                ) >= ?
+                WHERE (
+                  SELECT CASE
+                    WHEN typeof(ts) = 'text' THEN ts >= ?1
+                    WHEN typeof(ts) IN ('integer','real') THEN ts >= ?2
+                    ELSE 0
+                  END
+                  FROM (SELECT COALESCE(
+                    json_extract(h.value,'$.assistant.timestamp'),
+                    json_extract(h.value,'$.assistant.created_at'),
+                    json_extract(h.value,'$.user.timestamp'),
+                    json_extract(h.value,'$.user.created_at')
+                  ) AS ts)
+                )
                 """
-                return try Int.fetchOne(db, sql: sql, arguments: [monthStr]) ?? 0
+                return try Int.fetchOne(db, sql: sql, arguments: [monthStr, monthUnix]) ?? 0
             }
         }
         // Fallback: estimate based on conversation count (no timestamp filtering possible)
@@ -568,74 +581,7 @@ public actor QDBReader: DataSource {
         }
     }
 
-    public struct PeriodByModel: Sendable {
-        public let modelId: String?
-        public let dayTokens: Int
-        public let weekTokens: Int
-        public let monthTokens: Int
-        public let yearTokens: Int
-        public let dayMessages: Int
-        public let weekMessages: Int
-        public let monthMessages: Int
-        public let dayCost: Double
-        public let weekCost: Double
-        public let monthCost: Double
-        public let yearCost: Double
-
-        // Backward compatibility initializer without cost fields
-        public init(
-            modelId: String?,
-            dayTokens: Int,
-            weekTokens: Int,
-            monthTokens: Int,
-            yearTokens: Int,
-            dayMessages: Int,
-            weekMessages: Int,
-            monthMessages: Int
-        ) {
-            self.modelId = modelId
-            self.dayTokens = dayTokens
-            self.weekTokens = weekTokens
-            self.monthTokens = monthTokens
-            self.yearTokens = yearTokens
-            self.dayMessages = dayMessages
-            self.weekMessages = weekMessages
-            self.monthMessages = monthMessages
-            self.dayCost = 0.0
-            self.weekCost = 0.0
-            self.monthCost = 0.0
-            self.yearCost = 0.0
-        }
-
-        // Full initializer with cost fields
-        public init(
-            modelId: String?,
-            dayTokens: Int,
-            weekTokens: Int,
-            monthTokens: Int,
-            yearTokens: Int,
-            dayMessages: Int,
-            weekMessages: Int,
-            monthMessages: Int,
-            dayCost: Double,
-            weekCost: Double,
-            monthCost: Double,
-            yearCost: Double
-        ) {
-            self.modelId = modelId
-            self.dayTokens = dayTokens
-            self.weekTokens = weekTokens
-            self.monthTokens = monthTokens
-            self.yearTokens = yearTokens
-            self.dayMessages = dayMessages
-            self.weekMessages = weekMessages
-            self.monthMessages = monthMessages
-            self.dayCost = dayCost
-            self.weekCost = weekCost
-            self.monthCost = monthCost
-            self.yearCost = yearCost
-        }
-    }
+    public typealias PeriodByModel = Core.PeriodByModel
 
     public func fetchPeriodTokensByModel(now: Date = Date()) async throws -> [PeriodByModel] {
         guard await json1Available() else { return [] }

@@ -70,13 +70,13 @@ public protocol DataSource: Actor {
     /// Fetches global token totals grouped by model.
     /// Optional - implementations may return empty array if not supported.
     /// - Returns: Array of token/message counts per model
-    func fetchGlobalTotalsByModel() async throws -> [QDBReader.GlobalByModel]
+    func fetchGlobalTotalsByModel() async throws -> [GlobalByModel]
 
     /// Fetches token usage for all sessions for specific time periods grouped by model.
     /// Optional - implementations may return empty array if not supported.
     /// - Parameter now: Reference date for period calculations
     /// - Returns: Array of period metrics per model
-    func fetchPeriodTokensByModel(now: Date) async throws -> [QDBReader.PeriodByModel]
+    func fetchPeriodTokensByModel(now: Date) async throws -> [PeriodByModel]
 
     /// Fetches token usage for specific sessions for time periods grouped by model.
     /// Optional - implementations may return empty array if not supported.
@@ -87,7 +87,7 @@ public protocol DataSource: Actor {
     func fetchPeriodTokensByModel(
         forKeys keys: [String],
         now: Date
-    ) async throws -> [QDBReader.PeriodByModel]
+    ) async throws -> [PeriodByModel]
 
     /// Fetches monthly message count across all sessions.
     /// Optional - implementations may return 0 if not supported.
@@ -125,12 +125,12 @@ public extension DataSource {
     }
 
     /// Default implementation for period tokens for all sessions using current date
-    func fetchPeriodTokensByModel() async throws -> [QDBReader.PeriodByModel] {
+    func fetchPeriodTokensByModel() async throws -> [PeriodByModel] {
         try await fetchPeriodTokensByModel(now: Date())
     }
 
     /// Default implementation for period tokens using current date
-    func fetchPeriodTokensByModel(forKeys keys: [String]) async throws -> [QDBReader.PeriodByModel] {
+    func fetchPeriodTokensByModel(forKeys keys: [String]) async throws -> [PeriodByModel] {
         try await fetchPeriodTokensByModel(forKeys: keys, now: Date())
     }
 
@@ -140,7 +140,7 @@ public extension DataSource {
     }
 
     /// Default empty implementation for optional methods
-    func fetchGlobalTotalsByModel() async throws -> [QDBReader.GlobalByModel] {
+    func fetchGlobalTotalsByModel() async throws -> [GlobalByModel] {
         []
     }
 }
