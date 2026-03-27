@@ -40,13 +40,13 @@ providers:
     token_counting: quota       # rate_limit % only, no per-message token counts
 
 merge_policy:
-  type: human_only
+  type: auto_merge
   conditions:
     - "Splinter (🐀) approved"
     - "CI green (swift build + swift test)"
     - "No unresolved review comments"
-  human_required: true
-  notes: "Steven merges. No auto-merge."
+  human_required: false
+  notes: "Auto-merge when Splinter approved + CI green. No human approval needed. Steven's directive 2026-03-27."
 
 agents:
   primary_builders: [cantona]
@@ -79,20 +79,21 @@ context:
 phases:
   - id: phase1
     name: "Fix 6 correctness bugs"
-    status: pr_open               # PR #4 — Splinter approved, awaiting merge
+    status: merged                # PR #4 merged 2026-03-27
     branch: fix/qstatus-menubar-v2-phase1
     pr: 4
     owner: cantona
-    issues: [5]                   # BUG-4 Unix int timestamp follow-up
+    issues: [5, 8]                # BUG-4 Unix int timestamp; BUG-7 DTO coupling
   - id: phase2
     name: "Add GitHub Copilot Enterprise provider"
-    status: in_progress
+    status: merged                # PR #7 merged 2026-03-27
     branch: feat/qstatus-menubar-v2-phase2-copilot
+    pr: 7
     owner: cantona
     depends_on: phase1
   - id: phase3
     name: "Add Codex CLI provider"
-    status: planned
+    status: in_progress
     owner: cantona
     depends_on: phase2
 
