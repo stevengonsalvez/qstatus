@@ -161,18 +161,18 @@ actor MockDataSource: DataSource {
         )
     }
 
-    func fetchGlobalTotalsByModel() async throws -> [QDBReader.GlobalByModel] {
+    func fetchGlobalTotalsByModel() async throws -> [GlobalByModel] {
         return []
     }
 
-    func fetchPeriodTokensByModel(now: Date) async throws -> [QDBReader.PeriodByModel] {
+    func fetchPeriodTokensByModel(now: Date) async throws -> [PeriodByModel] {
         return []
     }
 
     func fetchPeriodTokensByModel(
         forKeys keys: [String],
         now: Date
-    ) async throws -> [QDBReader.PeriodByModel] {
+    ) async throws -> [PeriodByModel] {
         return []
     }
 

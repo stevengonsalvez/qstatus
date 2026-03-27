@@ -57,4 +57,5 @@ jobs:
         run: cargo build --release
 
       - name: Test
-        run: cargo test
+        # --test-threads=1 avoids env var races in tests that use set_var/remove_var
+        run: cargo test -- --test-threads=1

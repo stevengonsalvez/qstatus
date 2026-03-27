@@ -287,6 +287,118 @@ struct Bug5TokenEstimatorTests {
     }
 }
 
+// MARK: - BUG-4 follow-up: Unix integer timestamp fallback
+
+@Suite("BUG-4 follow-up: Unix int timestamp handling")
+struct Bug4UnixTimestampTests {
+
+    @Test("Monthly count handles Unix integer timestamps")
+    func testMonthlyCountHandlesUnixIntTimestamps() async throws {
+        let now = Date()
+        let cal = Calendar.current
+        let twoMonthsAgo = cal.date(byAdding: .month, value: -2, to: now)!
+
+        // Build conversation JSON with Unix integer timestamps (not ISO strings)
+        let nowUnix = Int(now.timeIntervalSince1970)
+        let oldUnix = Int(twoMonthsAgo.timeIntervalSince1970)
+
+        let currentJSON = makeConversationJSONWithUnixTimestamps(
+            historyEntries: [
+                ("user", "msg1", nowUnix),
+                ("assistant", "reply1", nowUnix),
+                ("user", "msg2", nowUnix),
+                ("assistant", "reply2", nowUnix)
+            ]
+        )
+        let oldJSON = makeConversationJSONWithUnixTimestamps(
+            historyEntries: [
+                ("user", "old msg", oldUnix),
+                ("assistant", "old reply", oldUnix)
+            ]
+        )
+
+        let dbPath = try makeTestDB(conversations: [
+            ("unix-current", currentJSON),
+            ("unix-old", oldJSON)
+        ])
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+
+        let reader = QDBReader(config: QDBConfig(dbPath: dbPath))
+        let monthlyCount = try await reader.fetchMonthlyMessageCount(now: now)
+
+        #expect(monthlyCount == 4,
+            "Monthly count should include Unix int timestamps from current month. Got \(monthlyCount), expected 4")
+    }
+
+    @Test("Monthly count handles mixed ISO and Unix timestamps")
+    func testMonthlyCountHandlesMixedTimestamps() async throws {
+        let now = Date()
+
+        let nowUnix = Int(now.timeIntervalSince1970)
+        let nowISO = iso(now)
+
+        // One conversation with Unix timestamps, one with ISO strings
+        let unixJSON = makeConversationJSONWithUnixTimestamps(
+            historyEntries: [
+                ("user", "unix msg", nowUnix),
+                ("assistant", "unix reply", nowUnix)
+            ]
+        )
+        let isoJSON = makeConversationJSON(
+            historyEntries: [
+                ("user", "iso msg", nowISO),
+                ("assistant", "iso reply", nowISO)
+            ]
+        )
+
+        let dbPath = try makeTestDB(conversations: [
+            ("unix-session", unixJSON),
+            ("iso-session", isoJSON)
+        ])
+        defer { try? FileManager.default.removeItem(atPath: dbPath) }
+
+        let reader = QDBReader(config: QDBConfig(dbPath: dbPath))
+        let monthlyCount = try await reader.fetchMonthlyMessageCount(now: now)
+
+        #expect(monthlyCount == 4,
+            "Monthly count should handle both Unix int and ISO string timestamps. Got \(monthlyCount), expected 4")
+    }
+}
+
+/// Helper: builds conversation JSON with Unix integer timestamps instead of ISO strings
+private func makeConversationJSONWithUnixTimestamps(
+    historyEntries: [(role: String, text: String, timestamp: Int)],
+    modelId: String = "claude-3-sonnet",
+    contextWindowTokens: Int = 200_000,
+    cwd: String = "/test/project"
+) -> String {
+    var historyItems: [String] = []
+    for entry in historyEntries {
+        let item: String
+        if entry.role == "user" {
+            item = """
+            {"user":{"content":"\(entry.text)","timestamp":\(entry.timestamp),"created_at":\(entry.timestamp)}}
+            """
+        } else {
+            item = """
+            {"assistant":{"content":"\(entry.text)","timestamp":\(entry.timestamp),"created_at":\(entry.timestamp)}}
+            """
+        }
+        historyItems.append(item)
+    }
+    let historyJSON = "[" + historyItems.joined(separator: ",") + "]"
+    return """
+    {
+      "model_info": {"model_id": "\(modelId)", "context_window_tokens": \(contextWindowTokens)},
+      "env_context": {"env_state": {"current_working_directory": "\(cwd)"}},
+      "history": \(historyJSON),
+      "context_manager": {"context_files": []},
+      "tool_manager": {},
+      "system_prompts": "You are a helpful assistant."
+    }
+    """
+}
+
 // MARK: - BUG-6: sessionCount(activeOnly:) ignores the parameter
 
 @Suite("BUG-6: sessionCount activeOnly filter")

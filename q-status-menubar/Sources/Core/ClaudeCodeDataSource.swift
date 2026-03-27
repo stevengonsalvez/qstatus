@@ -506,12 +506,12 @@ public actor ClaudeCodeDataSource: DataSource {
 
     // MARK: - Optional Protocol Methods (Empty Implementations)
 
-    public func fetchGlobalTotalsByModel() async throws -> [QDBReader.GlobalByModel] {
+    public func fetchGlobalTotalsByModel() async throws -> [GlobalByModel] {
         // Not implemented for Claude Code
         return []
     }
 
-    public func fetchPeriodTokensByModel(now: Date) async throws -> [QDBReader.PeriodByModel] {
+    public func fetchPeriodTokensByModel(now: Date) async throws -> [PeriodByModel] {
         try await openIfNeeded()
 
         let calendar = Calendar.current
@@ -520,7 +520,7 @@ public actor ClaudeCodeDataSource: DataSource {
         let startOfMonth = now.addingTimeInterval(-30 * 24 * 3600)  // 30 days ago (rolling month)
         let startOfYear = calendar.dateInterval(of: .year, for: now)?.start ?? now
 
-        var periodData: [String: QDBReader.PeriodByModel] = [:]
+        var periodData: [String: PeriodByModel] = [:]
 
         // Aggregate by model for each time period
         // IMPORTANT: Only count sessions/entries that actually occurred WITHIN each period
@@ -586,7 +586,7 @@ public actor ClaudeCodeDataSource: DataSource {
             if yearTokens == 0 { continue }
 
             // Get current period data or initialize
-            var modelData = periodData[model] ?? QDBReader.PeriodByModel(
+            var modelData = periodData[model] ?? PeriodByModel(
                 modelId: model,
                 dayTokens: 0,
                 weekTokens: 0,
@@ -602,7 +602,7 @@ public actor ClaudeCodeDataSource: DataSource {
             )
 
             // Accumulate the properly filtered data
-            modelData = QDBReader.PeriodByModel(
+            modelData = PeriodByModel(
                 modelId: model,
                 dayTokens: modelData.dayTokens + dayTokens,
                 weekTokens: modelData.weekTokens + weekTokens,
@@ -627,7 +627,7 @@ public actor ClaudeCodeDataSource: DataSource {
     public func fetchPeriodTokensByModel(
         forKeys keys: [String],
         now: Date
-    ) async throws -> [QDBReader.PeriodByModel] {
+    ) async throws -> [PeriodByModel] {
         // Not implemented for Claude Code
         return []
     }

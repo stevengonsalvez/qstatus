@@ -90,15 +90,15 @@ public actor CopilotDataSource: DataSource {
         GlobalMetrics(totalSessions: 0, totalTokens: 0, sessionsNearLimit: 0, topHeavySessions: [])
     }
 
-    public func fetchGlobalTotalsByModel() async throws -> [QDBReader.GlobalByModel] {
+    public func fetchGlobalTotalsByModel() async throws -> [GlobalByModel] {
         []
     }
 
-    public func fetchPeriodTokensByModel(now: Date) async throws -> [QDBReader.PeriodByModel] {
+    public func fetchPeriodTokensByModel(now: Date) async throws -> [PeriodByModel] {
         []
     }
 
-    public func fetchPeriodTokensByModel(forKeys keys: [String], now: Date) async throws -> [QDBReader.PeriodByModel] {
+    public func fetchPeriodTokensByModel(forKeys keys: [String], now: Date) async throws -> [PeriodByModel] {
         []
     }
 
