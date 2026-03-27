@@ -1,12 +1,14 @@
 // ABOUTME: Test to verify PercentageCalculator returns 0% when no active session exists
 // This test ensures the fix for the ccusage/qstatus discrepancy is working correctly
 
-import XCTest
+import Testing
+import Foundation
 @testable import Core
 
-class PercentageCalculatorNoSessionTest: XCTestCase {
+@Suite("PercentageCalculatorNoSession")
+struct PercentageCalculatorNoSessionTests {
 
-    func testNoActiveSessionReturnsZeroPercent() {
+    @Test func noActiveSessionReturnsZeroPercent() {
         // Test with no active session and monthly data available
         let monthlyData = (cost: 20.0, limit: 18.0)  // Cost exceeds limit
 
@@ -17,10 +19,10 @@ class PercentageCalculatorNoSessionTest: XCTestCase {
         )
 
         // Should return 0% instead of calculating monthly percentage
-        XCTAssertEqual(percentage, 0, "Should return 0% when no active session exists")
+        #expect(percentage == 0, "Should return 0% when no active session exists")
     }
 
-    func testNoActiveSessionNoMonthlyDataReturnsZeroPercent() {
+    @Test func noActiveSessionNoMonthlyDataReturnsZeroPercent() {
         // Test with no active session and no monthly data
         let percentage = PercentageCalculator.calculateCriticalPercentage(
             activeSession: nil,
@@ -29,10 +31,10 @@ class PercentageCalculatorNoSessionTest: XCTestCase {
         )
 
         // Should return 0%
-        XCTAssertEqual(percentage, 0, "Should return 0% when no active session and no monthly data")
+        #expect(percentage == 0, "Should return 0% when no active session and no monthly data")
     }
 
-    func testActiveSessionWithoutBlockUsesSessionData() {
+    @Test func activeSessionWithoutBlockUsesSessionData() {
         // Create a mock active session without a block
         let activeSession = ActiveSessionData(
             sessionId: "test-session",
@@ -61,6 +63,6 @@ class PercentageCalculatorNoSessionTest: XCTestCase {
         )
 
         // Should calculate based on session data, not return 0
-        XCTAssertGreaterThan(percentage, 0, "Should calculate percentage when active session exists")
+        #expect(percentage > 0, "Should calculate percentage when active session exists")
     }
 }

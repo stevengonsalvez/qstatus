@@ -1,21 +1,23 @@
 // ABOUTME: Tests for the DataSource protocol abstraction
 // Verifies that QDBReader correctly conforms to the protocol and that the abstraction works
 
-import XCTest
+import Testing
+import Foundation
 @testable import Core
 
-final class DataSourceProtocolTests: XCTestCase {
+@Suite("DataSourceProtocol")
+struct DataSourceProtocolTests {
 
-    func testQDBReaderConformsToDataSource() {
+    @Test func qdbReaderConformsToDataSource() {
         // This test verifies at compile-time that QDBReader conforms to DataSource
         // If this compiles, the protocol conformance is correct
         let _: any DataSource = QDBReader()
 
         // The fact that this compiles proves QDBReader conforms to DataSource
-        XCTAssertTrue(true, "QDBReader successfully conforms to DataSource protocol")
+        #expect(true, "QDBReader successfully conforms to DataSource protocol")
     }
 
-    func testDataSourceCanBeUsedAsAbstraction() async throws {
+    @Test func dataSourceCanBeUsedAsAbstraction() async throws {
         // Create a QDBReader through the protocol
         let dataSource: any DataSource = QDBReader()
 
@@ -48,10 +50,10 @@ final class DataSourceProtocolTests: XCTestCase {
             settings: settings
         )
 
-        XCTAssertNotNil(coordinator, "UpdateCoordinator accepts DataSource protocol")
+        #expect(coordinator != nil, "UpdateCoordinator accepts DataSource protocol")
     }
 
-    func testDefaultImplementations() async throws {
+    @Test func defaultImplementations() async throws {
         // Test that default implementations work
         let dataSource: any DataSource = QDBReader()
 
@@ -67,7 +69,7 @@ final class DataSourceProtocolTests: XCTestCase {
             print("Default implementations work but database access failed (expected): \(error)")
         }
 
-        XCTAssertTrue(true, "Default implementations are accessible")
+        #expect(true, "Default implementations are accessible")
     }
 }
 
@@ -179,19 +181,20 @@ actor MockDataSource: DataSource {
     }
 }
 
-final class MockDataSourceTests: XCTestCase {
+@Suite("MockDataSource")
+struct MockDataSourceTests {
 
-    func testMockDataSourceWorks() async throws {
+    @Test func mockDataSourceWorks() async throws {
         let mock: any DataSource = MockDataSource()
 
         // Test that mock implements all required methods
         try await mock.openIfNeeded()
 
         let version = try await mock.dataVersion()
-        XCTAssertEqual(version, 1)
+        #expect(version == 1)
 
         let usage = try await mock.fetchLatestUsage(window: nil)
-        XCTAssertEqual(usage.tokensUsed, 1000)
+        #expect(usage.tokensUsed == 1000)
 
         let sessions = try await mock.fetchSessions(
             limit: 10,
@@ -199,19 +202,19 @@ final class MockDataSourceTests: XCTestCase {
             groupByFolder: false,
             activeOnly: false
         )
-        XCTAssertEqual(sessions.count, 1)
+        #expect(sessions.count == 1)
 
         let detail = try await mock.fetchSessionDetail(key: "test")
-        XCTAssertNotNil(detail)
+        #expect(detail != nil)
 
         let count = try await mock.sessionCount(activeOnly: false)
-        XCTAssertEqual(count, 10)
+        #expect(count == 10)
 
         let metrics = try await mock.fetchGlobalMetrics(limitForTop: 5)
-        XCTAssertEqual(metrics.totalSessions, 10)
+        #expect(metrics.totalSessions == 10)
     }
 
-    func testUpdateCoordinatorWithMock() async throws {
+    @Test func updateCoordinatorWithMock() async throws {
         let mock: any DataSource = MockDataSource()
         let metrics = MetricsCalculator()
         let settings = SettingsStore()
@@ -232,6 +235,6 @@ final class MockDataSourceTests: XCTestCase {
         coordinator.stop()
 
         // Verify it initialized correctly
-        XCTAssertNotNil(coordinator.viewModel)
+        #expect(coordinator.viewModel != nil)
     }
 }

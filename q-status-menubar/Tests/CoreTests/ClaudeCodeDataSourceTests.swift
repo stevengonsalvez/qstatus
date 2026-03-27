@@ -1,24 +1,22 @@
 // ABOUTME: Unit tests for ClaudeCodeDataSource implementation
 // Tests JSONL parsing, session aggregation, and DataSource protocol compliance
 
-import XCTest
+import Testing
+import Foundation
 @testable import Core
 
-final class ClaudeCodeDataSourceTests: XCTestCase {
+@Suite("ClaudeCodeDataSource")
+struct ClaudeCodeDataSourceTests {
 
-    var dataSource: ClaudeCodeDataSource!
+    var dataSource: ClaudeCodeDataSource
 
-    override func setUp() async throws {
+    init() {
         dataSource = ClaudeCodeDataSource()
-    }
-
-    override func tearDown() {
-        dataSource = nil
     }
 
     // MARK: - JSONL Parsing Tests
 
-    func testClaudeUsageEntryDecoding() throws {
+    @Test func claudeUsageEntryDecoding() throws {
         let jsonString = """
         {
             "timestamp": "2024-01-15T10:30:00Z",
@@ -45,21 +43,21 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
 
         let entry = try decoder.decode(ClaudeUsageEntry.self, from: data)
 
-        XCTAssertEqual(entry.timestamp, "2024-01-15T10:30:00Z")
-        XCTAssertEqual(entry.sessionId, "test-session-123")
-        XCTAssertEqual(entry.message.usage.input_tokens, 1000)
-        XCTAssertEqual(entry.message.usage.output_tokens, 500)
-        XCTAssertEqual(entry.message.usage.cache_creation_input_tokens, 100)
-        XCTAssertEqual(entry.message.usage.cache_read_input_tokens, 50)
-        XCTAssertEqual(entry.message.model, "claude-3-5-sonnet-20241022")
-        XCTAssertEqual(entry.message.id, "msg-123")
-        XCTAssertEqual(entry.costUSD, 0.0225)
-        XCTAssertEqual(entry.requestId, "req-456")
-        XCTAssertEqual(entry.cwd, "/Users/test/project")
-        XCTAssertEqual(entry.version, "0.7.23")
+        #expect(entry.timestamp == "2024-01-15T10:30:00Z")
+        #expect(entry.sessionId == "test-session-123")
+        #expect(entry.message.usage.input_tokens == 1000)
+        #expect(entry.message.usage.output_tokens == 500)
+        #expect(entry.message.usage.cache_creation_input_tokens == 100)
+        #expect(entry.message.usage.cache_read_input_tokens == 50)
+        #expect(entry.message.model == "claude-3-5-sonnet-20241022")
+        #expect(entry.message.id == "msg-123")
+        #expect(entry.costUSD == 0.0225)
+        #expect(entry.requestId == "req-456")
+        #expect(entry.cwd == "/Users/test/project")
+        #expect(entry.version == "0.7.23")
     }
 
-    func testClaudeUsageEntryDecodingWithOptionalFields() throws {
+    @Test func claudeUsageEntryDecodingWithOptionalFields() throws {
         let jsonString = """
         {
             "timestamp": "2024-01-15T10:30:00Z",
@@ -77,23 +75,23 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
 
         let entry = try decoder.decode(ClaudeUsageEntry.self, from: data)
 
-        XCTAssertEqual(entry.timestamp, "2024-01-15T10:30:00Z")
-        XCTAssertNil(entry.sessionId)
-        XCTAssertEqual(entry.message.usage.input_tokens, 1000)
-        XCTAssertEqual(entry.message.usage.output_tokens, 500)
-        XCTAssertNil(entry.message.usage.cache_creation_input_tokens)
-        XCTAssertNil(entry.message.usage.cache_read_input_tokens)
-        XCTAssertNil(entry.message.model)
-        XCTAssertNil(entry.message.id)
-        XCTAssertNil(entry.costUSD)
-        XCTAssertNil(entry.requestId)
-        XCTAssertNil(entry.cwd)
-        XCTAssertNil(entry.version)
+        #expect(entry.timestamp == "2024-01-15T10:30:00Z")
+        #expect(entry.sessionId == nil)
+        #expect(entry.message.usage.input_tokens == 1000)
+        #expect(entry.message.usage.output_tokens == 500)
+        #expect(entry.message.usage.cache_creation_input_tokens == nil)
+        #expect(entry.message.usage.cache_read_input_tokens == nil)
+        #expect(entry.message.model == nil)
+        #expect(entry.message.id == nil)
+        #expect(entry.costUSD == nil)
+        #expect(entry.requestId == nil)
+        #expect(entry.cwd == nil)
+        #expect(entry.version == nil)
     }
 
     // MARK: - Token Calculation Tests
 
-    func testTokenUsageTotalCalculation() {
+    @Test func tokenUsageTotalCalculation() {
         let usage = ClaudeTokenUsage(
             input_tokens: 1000,
             output_tokens: 500,
@@ -101,10 +99,10 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
             cache_read_input_tokens: 50
         )
 
-        XCTAssertEqual(usage.totalTokens, 1650)
+        #expect(usage.totalTokens == 1650)
     }
 
-    func testTokenUsageTotalWithNilOptionals() {
+    @Test func tokenUsageTotalWithNilOptionals() {
         let usage = ClaudeTokenUsage(
             input_tokens: 1000,
             output_tokens: 500,
@@ -112,12 +110,12 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
             cache_read_input_tokens: nil
         )
 
-        XCTAssertEqual(usage.totalTokens, 1500)
+        #expect(usage.totalTokens == 1500)
     }
 
     // MARK: - Session Aggregation Tests
 
-    func testSessionTotalTokensCalculation() {
+    @Test func sessionTotalTokensCalculation() {
         let session = ClaudeSession(
             id: "test-session",
             startTime: Date(),
@@ -134,36 +132,36 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
             messageCount: 1
         )
 
-        XCTAssertEqual(session.totalTokens, 1650)
+        #expect(session.totalTokens == 1650)
     }
 
     // MARK: - DataSource Protocol Tests
 
-    func testDataSourceInitialization() async throws {
+    @Test func dataSourceInitialization() async throws {
         // Test that the data source can be opened without errors
         // This will fail if no Claude data directories exist, which is expected in test environment
         do {
             try await dataSource.openIfNeeded()
         } catch {
             // Expected in test environment without actual Claude data
-            XCTAssertNotNil(error)
+            #expect(error != nil)
         }
     }
 
-    func testFetchLatestUsageWithNoData() async throws {
+    @Test func fetchLatestUsageWithNoData() async throws {
         // When no data is available, should return empty snapshot
         do {
             let usage = try await dataSource.fetchLatestUsage(window: nil)
-            XCTAssertEqual(usage.tokensUsed, 0)
-            XCTAssertEqual(usage.messageCount, 0)
-            XCTAssertNil(usage.conversationId)
+            #expect(usage.tokensUsed == 0)
+            #expect(usage.messageCount == 0)
+            #expect(usage.conversationId == nil)
         } catch {
             // Expected if no Claude directories exist
-            XCTAssertNotNil(error)
+            #expect(error != nil)
         }
     }
 
-    func testFetchSessionsWithNoData() async throws {
+    @Test func fetchSessionsWithNoData() async throws {
         // When no data is available, should return empty array
         do {
             let sessions = try await dataSource.fetchSessions(
@@ -172,41 +170,41 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
                 groupByFolder: false,
                 activeOnly: false
             )
-            XCTAssertEqual(sessions.count, 0)
+            #expect(sessions.count == 0)
         } catch {
             // Expected if no Claude directories exist
-            XCTAssertNotNil(error)
+            #expect(error != nil)
         }
     }
 
-    func testSessionCountWithNoData() async throws {
+    @Test func sessionCountWithNoData() async throws {
         // When no data is available, should return 0
         do {
             let count = try await dataSource.sessionCount(activeOnly: false)
-            XCTAssertEqual(count, 0)
+            #expect(count == 0)
         } catch {
             // Expected if no Claude directories exist
-            XCTAssertNotNil(error)
+            #expect(error != nil)
         }
     }
 
-    func testFetchGlobalMetricsWithNoData() async throws {
+    @Test func fetchGlobalMetricsWithNoData() async throws {
         // When no data is available, should return empty metrics
         do {
             let metrics = try await dataSource.fetchGlobalMetrics(limitForTop: 5)
-            XCTAssertEqual(metrics.totalSessions, 0)
-            XCTAssertEqual(metrics.totalTokens, 0)
-            XCTAssertEqual(metrics.sessionsNearLimit, 0)
-            XCTAssertEqual(metrics.topHeavySessions.count, 0)
+            #expect(metrics.totalSessions == 0)
+            #expect(metrics.totalTokens == 0)
+            #expect(metrics.sessionsNearLimit == 0)
+            #expect(metrics.topHeavySessions.count == 0)
         } catch {
             // Expected if no Claude directories exist
-            XCTAssertNotNil(error)
+            #expect(error != nil)
         }
     }
 
     // MARK: - Date Parsing Tests
 
-    func testISO8601DateParsing() throws {
+    @Test func iso8601DateParsing() throws {
         let jsonString = """
         {
             "timestamp": "2024-01-15T10:30:00Z",
@@ -223,15 +221,15 @@ final class ClaudeCodeDataSourceTests: XCTestCase {
         let decoder = JSONDecoder()
         let entry = try decoder.decode(ClaudeUsageEntry.self, from: data)
 
-        XCTAssertNotNil(entry.date)
+        #expect(entry.date != nil)
 
         // Verify the date components
         let calendar = Calendar(identifier: .gregorian)
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: entry.date!)
 
-        XCTAssertEqual(components.year, 2024)
-        XCTAssertEqual(components.month, 1)
-        XCTAssertEqual(components.day, 15)
+        #expect(components.year == 2024)
+        #expect(components.month == 1)
+        #expect(components.day == 15)
     }
 
     // MARK: - Sample Data Creation Helpers

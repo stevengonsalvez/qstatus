@@ -1,4 +1,4 @@
-// swift-tools-version: 5.10
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -12,6 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.26.0"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.2"),
+        .package(url: "https://github.com/swiftlang/swift-testing.git", from: "0.12.0"),
     ],
     targets: [
         .executableTarget(
@@ -19,7 +20,8 @@ let package = Package(
             dependencies: ["Core"],
             path: "Sources/App",
             swiftSettings: [
-                .define("SWIFTUI_APP")
+                .define("SWIFTUI_APP"),
+                .swiftLanguageMode(.v5)
             ]
         ),
         .target(
@@ -28,12 +30,22 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Yams", package: "Yams")
             ],
-            path: "Sources/Core"
+            path: "Sources/Core",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
         ),
         .testTarget(
             name: "CoreTests",
-            dependencies: ["Core"],
-            path: "Tests/CoreTests"
+            dependencies: [
+                "Core",
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Testing", package: "swift-testing")
+            ],
+            path: "Tests/CoreTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
         )
     ]
 )
