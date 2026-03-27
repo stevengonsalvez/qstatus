@@ -60,19 +60,28 @@ struct DropdownView: View {
                         claudeCodeSection
                     }
 
-                    Divider()
-
-                    // Recent Sessions header block
-                    recentSessionsSection
-
-                    Divider()
-
-                    // Compact view - show only 3 recent sessions
-                    compactSessionsList
+                    // Copilot quota section
+                    if viewModel.settings?.dataSourceType == .copilot {
+                        copilotQuotaSection
+                    }
 
                     Divider()
 
-                    // View Dashboard button for detailed analytics
+                    // Recent Sessions header block (hidden for Copilot — no session concept)
+                    if viewModel.settings?.dataSourceType != .copilot {
+                        recentSessionsSection
+                    }
+
+                    if viewModel.settings?.dataSourceType != .copilot {
+                        Divider()
+
+                        // Compact view - show only 3 recent sessions
+                        compactSessionsList
+
+                        Divider()
+                    }
+
+                    // View Dashboard button for detailed analytics (not for Copilot)
                     HStack {
                         Spacer()
                         Button(action: { viewModel.showAllSheet = true }) {
@@ -181,6 +190,8 @@ struct DropdownView: View {
         VStack(alignment: .leading, spacing: 8) {
             if viewModel.settings?.dataSourceType == .claudeCode {
                 claudeCodeHeader
+            } else if viewModel.settings?.dataSourceType == .copilot {
+                copilotHeader
             } else {
                 amazonQHeader
             }
@@ -263,6 +274,138 @@ struct DropdownView: View {
                 .help("Show sparkline visualization and period totals")
         }
         .font(.caption)
+    }
+
+    @ViewBuilder
+    private var copilotHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            HStack(spacing: 4) {
+                Text("GitHub Copilot").font(.headline)
+                Text("•")
+                    .foregroundStyle(.secondary)
+                Image(systemName: "g.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .help("Data source: GitHub Copilot Enterprise")
+            }
+            Spacer()
+            if let quota = viewModel.copilotQuota {
+                // Show primary quota percentage
+                let primaryPercent = quota.premiumInteractions?.usedPercent ?? quota.chat?.usedPercent ?? 0
+                Text("\(Int(primaryPercent.rounded()))%")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(copilotPercentColor(primaryPercent))
+                    .help("Quota usage percentage")
+            }
+        }
+        .font(.caption)
+
+        if let quota = viewModel.copilotQuota {
+            HStack {
+                Text("Plan: \(quota.plan)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let resetDate = quota.resetDate {
+                    Text("• Resets: \(copilotFormatResetDate(resetDate))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var copilotQuotaSection: some View {
+        if let quota = viewModel.copilotQuota {
+            VStack(alignment: .leading, spacing: 10) {
+                if let premium = quota.premiumInteractions {
+                    copilotQuotaRow(item: premium)
+                }
+                if let chat = quota.chat {
+                    copilotQuotaRow(item: chat)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.green.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.green.opacity(0.15), lineWidth: 1)
+            )
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text("Loading Copilot quota...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
+    }
+
+    @ViewBuilder
+    private func copilotQuotaRow(item: CopilotQuotaDisplayData.QuotaItem) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(item.label)
+                    .font(.system(size: 11, weight: .medium))
+                Spacer()
+                Text("\(Int(item.usedPercent.rounded()))% used")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(copilotPercentColor(item.usedPercent))
+            }
+
+            // Progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 8)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(copilotBarGradient(item.usedPercent))
+                        .frame(width: max(0, geo.size.width * min(1, item.usedPercent / 100)), height: 8)
+                }
+            }
+            .frame(height: 8)
+
+            HStack {
+                Text("\(item.used)/\(item.total)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+    }
+
+    private func copilotPercentColor(_ percent: Double) -> Color {
+        if percent >= 90 { return .red }
+        if percent >= 70 { return .orange }
+        return .green
+    }
+
+    private func copilotBarGradient(_ percent: Double) -> LinearGradient {
+        let color: Color = copilotPercentColor(percent)
+        return LinearGradient(
+            colors: [color.opacity(0.7), color],
+            startPoint: .leading,
+            endPoint: .trailing)
+    }
+
+    private func copilotFormatResetDate(_ dateStr: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let date = formatter.date(from: dateStr) {
+            let display = DateFormatter()
+            display.dateFormat = "MMM d"
+            return display.string(from: date)
+        }
+        return dateStr
     }
 
     @ViewBuilder
@@ -815,7 +958,7 @@ struct DropdownView: View {
             HStack(spacing: 4) {
                 Image(systemName: provider.iconName)
                     .font(.caption)
-                    .foregroundStyle(provider == .amazonQ ? .blue : .purple)
+                    .foregroundStyle(provider == .amazonQ ? .blue : provider == .copilot ? .green : .purple)
                 Text(provider.displayName)
                     .font(.caption)
             }

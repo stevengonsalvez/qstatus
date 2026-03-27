@@ -121,6 +121,9 @@ public final class SettingsStore: ObservableObject {
     @Published public var dataSourceType: DataSourceType = .amazonQ
     @Published public var claudeConfigPaths: [String] = SettingsStore.defaultClaudeConfigPaths()
 
+    // Copilot configuration (nil = auto-detect from gh CLI / Keychain)
+    @Published public var copilotToken: String? = nil
+
     // Computed property to check if approaching Claude token limit
     public func isApproachingClaudeLimit(currentTokens: Int) -> Bool {
         let percentage = Double(currentTokens) / Double(claudeTokenLimit)
@@ -186,6 +189,7 @@ public final class SettingsStore: ObservableObject {
                         self.claudeConfigPaths = csv.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                     }
                     if let mode = dict["cost_mode"] as? String { self.costMode = mode }
+                    if let copilotTok = dict["copilot_token"] as? String, !copilotTok.isEmpty { self.copilotToken = copilotTok }
                 }
             }
         } catch {
@@ -226,7 +230,8 @@ public final class SettingsStore: ObservableObject {
             "compact_mode": compactMode,
             "claude_view_mode": claudeViewMode.rawValue,
             "data_source_type": dataSourceType.rawValue,
-            "claude_config_paths": claudeConfigPaths
+            "claude_config_paths": claudeConfigPaths,
+            "copilot_token": copilotToken as Any
         ]
         do {
             let yaml = try Yams.dump(object: dict)
@@ -260,7 +265,9 @@ public final class SettingsStore: ObservableObject {
         if let s = env["QSTATUS_DATA_SOURCE"] {
             if s == "amazon-q" { dataSourceType = .amazonQ }
             else if s == "claude-code" { dataSourceType = .claudeCode }
+            else if s == "copilot" { dataSourceType = .copilot }
         }
+        if let s = env["QSTATUS_COPILOT_TOKEN"], !s.isEmpty { copilotToken = s }
         if let s = env["QSTATUS_CLAUDE_CONFIG_PATHS"] {
             claudeConfigPaths = s.split(separator: ":").map(String.init)
         }
