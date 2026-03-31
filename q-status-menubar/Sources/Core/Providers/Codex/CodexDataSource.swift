@@ -246,13 +246,13 @@ public actor CodexDataSource: DataSource {
             if rateLimits != nil && cwd != nil && model != nil && sessionId != nil {
                 break outerLoop
             }
-        }   // end lines loop
+        } // end lines loop
 
         // Early exit outer chunk loop if all fields found
         if rateLimits != nil && cwd != nil && model != nil && sessionId != nil {
             break outerLoop
         }
-        }   // end outerLoop
+    } // end outerLoop
 
         // Determine activity based on file mtime
         let mtime: Date
