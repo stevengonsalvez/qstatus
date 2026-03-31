@@ -144,23 +144,67 @@ public actor CodexDataSource: DataSource {
     // MARK: - JSONL Parsing
 
     /// Parse a JSONL session file for the latest rate_limits and session metadata.
-    /// Reads lines in reverse order so the last event_msg with rate_limits wins.
+    /// Stream-parses JSONL in reverse using a file handle, O(1) memory for the common case.
+    /// Reads backwards in 16 KB chunks until all required fields are found or file exhausted.
     public static func parseSessionFile(_ url: URL, inactiveThreshold: TimeInterval = 3600) throws -> CodexSessionData {
-        let data = try Data(contentsOf: url)
-        guard let content = String(data: data, encoding: .utf8) else {
-            throw CodexError.invalidFileEncoding
-        }
-
-        let lines = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
-
         var rateLimits: CodexRateLimits?
         var cwd: String?
         var model: String?
         var sessionId: String?
         var turnSummary: String?
 
-        // Parse in reverse to get latest state
-        for line in lines.reversed() {
+        // Reverse-chunk reader: read file backwards in 16 KB chunks, extract complete JSONL lines.
+        let chunkSize: Int = 16_384
+        let fileHandle = try FileHandle(forReadingFrom: url)
+        defer { try? fileHandle.close() }
+
+        let fileSize = Int((try? fileHandle.seekToEndOfFile()) ?? 0)
+        var offset = fileSize
+        var leftover = Data()   // partial line fragment from the right of the previous chunk
+
+        outerLoop: while offset > 0 || !leftover.isEmpty {
+            let readSize = min(chunkSize, offset)
+            offset -= readSize
+
+            var chunk: Data
+            if readSize > 0 {
+                try fileHandle.seek(toOffset: UInt64(offset))
+                chunk = fileHandle.readData(ofLength: readSize)
+            } else {
+                chunk = Data()
+            }
+
+            // Prepend any leftover from the previous (right-side) chunk
+            chunk.append(leftover)
+            leftover = Data()
+
+            // Split into lines; the first segment may be an incomplete line (save as leftover for next round)
+            let newline = UInt8(ascii: "\n")
+            var lineEnd = chunk.count
+            var lines: [String] = []
+
+            for i in stride(from: chunk.count - 1, through: 0, by: -1) {
+                if chunk[i] == newline {
+                    let lineData = chunk[(i + 1)..<lineEnd]
+                    if !lineData.isEmpty, let s = String(data: lineData, encoding: .utf8), !s.trimmingCharacters(in: .whitespaces).isEmpty {
+                        lines.append(s)
+                    }
+                    lineEnd = i
+                }
+            }
+            // Remaining bytes at start of chunk are a partial line — carry over to next iteration
+            if lineEnd > 0 {
+                leftover = chunk[0..<lineEnd]
+            }
+
+            // If we've exhausted the file and still have leftover, process it now
+            if offset == 0, !leftover.isEmpty, let s = String(data: leftover, encoding: .utf8), !s.trimmingCharacters(in: .whitespaces).isEmpty {
+                lines.append(s)
+                leftover = Data()
+            }
+
+        // Parse each line extracted from this chunk
+        for line in lines {
             guard let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                 continue
@@ -200,9 +244,15 @@ public actor CodexDataSource: DataSource {
 
             // Early exit if we have everything
             if rateLimits != nil && cwd != nil && model != nil && sessionId != nil {
-                break
+                break outerLoop
             }
+        } // end lines loop
+
+        // Early exit outer chunk loop if all fields found
+        if rateLimits != nil && cwd != nil && model != nil && sessionId != nil {
+            break outerLoop
         }
+    } // end outerLoop
 
         // Determine activity based on file mtime
         let mtime: Date

@@ -225,4 +225,34 @@ final class CodexDataSourceTests: XCTestCase {
         XCTAssertNil(session.model)
         XCTAssertNil(session.sessionId)
     }
+
+    // MARK: - Large file stream-parse (issue #13)
+
+    /// Verifies that parseSessionFile correctly extracts rate_limits from the LAST
+    /// event_msg in a large file (10 000 turns), reading from end rather than loading all.
+    func testCodexLargeFileStreamParseFindsLastRateLimits() throws {
+        let file = tempDir.appendingPathComponent("large-session.jsonl")
+
+        // Build a file with 10 000 turns; rate_limit percentage increases each turn.
+        var lines: [String] = []
+        lines.append("""
+        {"type":"session_meta","id":"large-sess","cwd":"/large/project","model_provider":"anthropic","cli_version":"1.0"}
+        """)
+        for i in 1...10_000 {
+            let pct = Double(i) / 100.0   // 0.01 … 100.00
+            lines.append("""
+            {"type":"event_msg","rate_limits":{"primary":{"used_percent":\(pct),"window_minutes":300,"resets_at":1700000000},"secondary":{"used_percent":\(pct / 2.0),"window_minutes":10080,"resets_at":1700100000},"credits":{"has_credits":true,"unlimited":false,"balance":5.00},"plan_type":"pro"}}
+            """)
+        }
+        try lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+
+        let session = try CodexDataSource.parseSessionFile(file)
+
+        let rl = try XCTUnwrap(session.rateLimits)
+        // Last event has i=10000 → pct=100.00
+        XCTAssertEqual(rl.primaryUsedPercent, 100.0, accuracy: 0.01,
+                       "Should find the LAST event_msg (turn 10000), not the first")
+        XCTAssertEqual(session.sessionId, "large-sess")
+        XCTAssertEqual(session.cwd, "/large/project")
+    }
 }
