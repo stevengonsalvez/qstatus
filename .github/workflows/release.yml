@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-menubar:
+    name: Build menubar + CLI (macOS)
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            q-status-cli/target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build CLI (arm64)
+        run: |
+          cd q-status-cli
+          cargo build --release --target aarch64-apple-darwin
+          cp target/aarch64-apple-darwin/release/q-status target/q-status-arm64
+
+      - name: Build CLI (x86_64)
+        run: |
+          cd q-status-cli
+          cargo build --release --target x86_64-apple-darwin
+          cp target/x86_64-apple-darwin/release/q-status target/q-status-x86_64
+
+      - name: Create CLI universal binary
+        run: |
+          cd q-status-cli
+          lipo -create \
+            target/q-status-arm64 \
+            target/q-status-x86_64 \
+            -output target/q-status-universal
+          lipo -info target/q-status-universal
+
+      - name: Build menubar (release)
+        run: |
+          cd q-status-menubar
+          swift build -c release
+
+      - name: Create app bundle + DMG
+        run: |
+          cd q-status-menubar
+          make package-menubar
+          bash scripts/build-dmg.sh 2>/dev/null || true
+          # Fallback: zip the app bundle
+          zip -r QStatus.app.zip QStatus.app
+
+      - name: Package release assets
+        run: |
+          mkdir -p dist
+          VERSION="${GITHUB_REF_NAME}"
+
+          # CLI — arm64
+          cd q-status-cli
+          tar -czf ../dist/qstatus-cli-macos-arm64.tar.gz -C target/aarch64-apple-darwin/release q-status
+          # CLI — x86_64
+          tar -czf ../dist/qstatus-cli-macos-x86_64.tar.gz -C target/x86_64-apple-darwin/release q-status
+          # CLI — universal
+          tar -czf ../dist/qstatus-cli-macos-universal.tar.gz -C target q-status-universal
+          cd ..
+
+          # Menubar — .app zip
+          cp q-status-menubar/QStatus.app.zip dist/
+          # Menubar — DMG (if built)
+          [ -f q-status-menubar/QStatus.dmg ] && cp q-status-menubar/QStatus.dmg dist/ || true
+
+          # Print SHAs for formula update
+          echo "=== SHA256 values for Homebrew formulas ==="
+          for f in dist/*; do
+            echo "  $(shasum -a 256 $f | awk '{print $1}')  $(basename $f)"
+          done
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "qstatus ${{ github.ref_name }}"
+          body: |
+            ## qstatus ${{ github.ref_name }}
+
+            ### What's new in v2.0.0
+
+            **Phase 1 — Data Correctness**
+            - Fixed critical bug: day/week/month metrics were returning all-time totals
+            - Fixed session detection: now uses activity timestamp instead of rowid
+            - Fixed monthly message count: properly filtered to current month
+            - Unified 3 divergent token estimators into one
+            - Fixed `sessionCount(activeOnly:)` ignoring the parameter
+            - Removed hardcoded 175k context window override
+
+            **Phase 2 — GitHub Copilot Enterprise**
+            - New provider: shows premium interactions % and chat quota %
+            - Auth via GitHub CLI token (`~/.config/gh/hosts.yml`) or Keychain
+            - Handles Enterprise `monthly_quotas` / `limited_user_quotas` schema
+
+            **Phase 3 — Codex CLI**
+            - New provider: reads `~/.codex/sessions/` JSONL files
+            - Shows 5h primary and 7d secondary rate limit percentages
+            - Active session detection by file mtime (inactive after 1h)
+            - O(1) memory: reverse-chunk stream parser for large session files
+            - Credits balance display when applicable
+
+            **Infrastructure**
+            - GitHub Actions CI (macos-15 + Xcode 16, Swift 6.0 compatible)
+            - `.clan/manifest.yaml` for agent context routing
+
+            ### Installation
+
+            #### Homebrew (recommended)
+            ```bash
+            brew tap stevengonsalvez/qstatus
+            brew install qstatus-cli          # CLI dashboard
+            brew install --cask qstatus-menu  # menubar app
+            ```
+
+            #### Manual — menubar app
+            1. Download `QStatus.dmg` or `QStatus.app.zip`
+            2. Open DMG and drag to Applications (or unzip)
+            3. Launch from Applications or Spotlight
+
+            #### Manual — CLI
+            ```bash
+            # Apple Silicon
+            curl -L https://github.com/stevengonsalvez/qstatus/releases/download/${{ github.ref_name }}/qstatus-cli-macos-arm64.tar.gz | tar xz
+            mv q-status /usr/local/bin/qstatus
+
+            # Intel
+            curl -L https://github.com/stevengonsalvez/qstatus/releases/download/${{ github.ref_name }}/qstatus-cli-macos-x86_64.tar.gz | tar xz
+            mv q-status /usr/local/bin/qstatus
+            ```
+          files: |
+            dist/qstatus-cli-macos-arm64.tar.gz
+            dist/qstatus-cli-macos-x86_64.tar.gz
+            dist/qstatus-cli-macos-universal.tar.gz
+            dist/QStatus.app.zip
+            dist/QStatus.dmg
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
