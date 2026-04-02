@@ -13,7 +13,7 @@
         "@oxc-project/runtime": "^0.123.0",
         "@praha/byethrow": "^0.10.0",
         "@praha/byethrow-mcp": "^0.10.0",
-        "@ryoppippi/eslint-config": "^0.3.7",
+        "@ryoppippi/eslint-config": "^0.4.0",
         "@ryoppippi/limo": "npm:@jsr/ryoppippi__limo@^0.2.2",
         "@std/async": "npm:@jsr/std__async@^1.0.14",
         "@types/bun": "^1.2.20",
@@ -441,7 +441,7 @@
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.46.2", "", { "os": "win32", "cpu": "x64" }, "sha512-CvUo2ixeIQGtF6WvuB87XWqPQkoFAFqW+HUo/WzHwuHDvIwZCtjdWXoYCcr06iKGydiqTclC4jU/TNObC/xKZg=="],
 
-    "@ryoppippi/eslint-config": ["@ryoppippi/eslint-config@0.3.7", "", { "dependencies": { "@antfu/eslint-config": "^4.11.0", "eslint-flat-config-utils": "^2.0.1", "eslint-plugin-ryoppippi": "^0.2.2", "pkg-types": "^2.1.0" }, "peerDependencies": { "@next/eslint-plugin-next": "^15.2.4", "@tanstack/eslint-plugin-query": ">= 5.68.0", "@tanstack/eslint-plugin-router": ">= 1.114.29", "eslint": ">= 9.23.0", "eslint-plugin-tailwindcss": "^3.18.0" }, "optionalPeers": ["@next/eslint-plugin-next", "@tanstack/eslint-plugin-query", "@tanstack/eslint-plugin-router", "eslint-plugin-tailwindcss"] }, "sha512-T0dW35+AtaaBfm0Ta1zl8/Xn0PD5NJoajCDgKr16ywwmg9q0xWjfwYCBaCJr+6QAKHokUH6109Q/nUf30pq9nA=="],
+    "@ryoppippi/eslint-config": ["@ryoppippi/eslint-config@0.4.0", "", { "dependencies": { "@antfu/eslint-config": "^4.19.0", "eslint-flat-config-utils": "^2.1.1", "eslint-plugin-ryoppippi": "^0.2.6", "pkg-types": "^2.3.0" }, "peerDependencies": { "@next/eslint-plugin-next": "^15.3.5", "@tanstack/eslint-plugin-query": ">= 5.83.1", "@tanstack/eslint-plugin-router": ">= 1.131.2", "eslint": ">= 9.33.0", "eslint-plugin-tailwindcss": "^3.18.2" }, "optionalPeers": ["@next/eslint-plugin-next", "@tanstack/eslint-plugin-query", "@tanstack/eslint-plugin-router", "eslint-plugin-tailwindcss"] }, "sha512-Ecx2T0WwIci7E1tvLpEJvdHqwj/2VgXv2oRib59HR2Gnk9i6qJyNtONclKoWr9PHDKDOl58xF6U9TxEn4zABTA=="],
 
     "@ryoppippi/limo": ["@jsr/ryoppippi__limo@0.2.2", "https://npm.jsr.io/~/11/@jsr/ryoppippi__limo/0.2.2.tgz", { "dependencies": { "@jsr/std__toml": "^1.0.0", "@jsr/std__yaml": "^1.0.0", "type-fest": "^4.41.0" } }, "sha512-kRGOKPq2GJRf/nrDO3EIW+KBXxkzz12SYiXK0rh1LF+OFondo7mk4nJFcSfxVMth+RQSGymBrkJsVTd45ZlbXA=="],
 
