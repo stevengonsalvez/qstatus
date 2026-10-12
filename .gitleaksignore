@@ -1,0 +1,7 @@
+# Historical gitleaks hits present when this gate was added (2026-10-12).
+# Reviewed as test fixtures and placeholders. A new leak is not in this list and fails CI.
+# Remove a line once its value is rotated or the file is gone. Do not add a line to hide a new leak.
+33c884845bf6fc4a02184aba4cd609f1e3fd5513:q-status-menubar/Tests/CoreTests/CopilotDataSourceTests.swift:generic-api-key:140
+33c884845bf6fc4a02184aba4cd609f1e3fd5513:q-status-menubar/Tests/CoreTests/CopilotDataSourceTests.swift:generic-api-key:146
+fef43db9a4f4c00feb9d399020c0630c75f60265:q-status-menubar/Tests/CoreTests/CopilotDataSourceTests.swift:generic-api-key:140
+fef43db9a4f4c00feb9d399020c0630c75f60265:q-status-menubar/Tests/CoreTests/CopilotDataSourceTests.swift:generic-api-key:146
